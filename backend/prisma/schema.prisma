@@ -1,0 +1,403 @@
+// Furniture House Inventory & Sales System
+// PostgreSQL schema for Prisma (written for Prisma 7: the connection URL lives in prisma.config.ts).
+// On Prisma 6 or older, add  url = env("DATABASE_URL")  (and directUrl for Supabase) to the datasource block.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs" // remove this line if your backend package.json has "type": "module"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// ENUMS
+// ---------------------------------------------------------------------------
+
+enum Role {
+  OWNER
+  WORKSHOP_MANAGER
+  STORE_MANAGER
+  SHOWROOM // one shared login per showroom (manager + sales staff)
+}
+
+enum LocationType {
+  WORKSHOP
+  STORE
+  SHOWROOM
+}
+
+enum TransferStatus {
+  DRAFT
+  IN_TRANSIT
+  RECEIVED
+  RECEIVED_WITH_DISCREPANCY
+  CANCELLED
+}
+
+enum MovementReason {
+  PRODUCTION
+  TRANSFER_OUT
+  TRANSFER_IN
+  SALE
+  VOID
+  RETURN
+  ADJUSTMENT
+}
+
+enum SaleStatus {
+  ACTIVE
+  VOIDED
+}
+
+enum SalePaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  TELEBIRR
+  CBE_BIRR
+  OTHER
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  VERIFIED
+  REJECTED
+}
+
+// ---------------------------------------------------------------------------
+// LOCATIONS, USERS, SESSIONS, SALESPEOPLE
+// ---------------------------------------------------------------------------
+
+model Location {
+  id        String       @id @default(uuid())
+  name      String       @unique
+  type      LocationType
+  address   String?
+  phone     String?
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  users        User[]
+  salespeople  Salesperson[]
+  stockLevels  StockLevel[]
+  movements    StockMovement[]
+  transfersOut Transfer[]      @relation("TransferFrom")
+  transfersIn  Transfer[]      @relation("TransferTo")
+  sales        Sale[]
+
+  @@index([type])
+}
+
+model User {
+  id                  String    @id @default(uuid())
+  fullName            String
+  email               String    @unique
+  phone               String?
+  passwordHash        String
+  role                Role
+  locationId          String? // null for the Owner; required for every other role
+  telegramChatId      String? // set when the user presses Start on the Telegram bot
+  isActive            Boolean   @default(true)
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  twoFactorEnabled    Boolean   @default(false) // owner account only
+  twoFactorSecret     String? // store encrypted
+  lastLoginAt         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  location          Location?         @relation(fields: [locationId], references: [id])
+  sessions          Session[]
+  movements         StockMovement[]
+  transfersCreated  Transfer[]        @relation("TransferCreatedBy")
+  transfersReceived Transfer[]        @relation("TransferReceivedBy")
+  salesRecorded     Sale[]            @relation("SaleRecordedBy")
+  salesVoided       Sale[]            @relation("SaleVoidedBy")
+  paymentsRecorded  Payment[]         @relation("PaymentRecordedBy")
+  paymentsVerified  Payment[]         @relation("PaymentVerifiedBy")
+  notifications     NotificationLog[]
+  auditLogs         AuditLog[]
+
+  @@index([role])
+  @@index([locationId])
+}
+
+// One row per logged-in device. Deleting or revoking a row logs that device out.
+model Session {
+  id               String    @id @default(uuid())
+  userId           String
+  refreshTokenHash String
+  userAgent        String?
+  ipAddress        String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// Names on a showroom's list. NOT logins. Picked in the "Sold by" dropdown.
+model Salesperson {
+  id         String   @id @default(uuid())
+  showroomId String
+  fullName   String
+  phone      String?
+  pinHash    String? // optional PIN confirmation, stored hashed
+  isActive   Boolean  @default(true) // deactivate, never delete, so old sales keep the name
+  createdAt  DateTime @default(now())
+
+  showroom Location @relation(fields: [showroomId], references: [id])
+  sales    Sale[]
+
+  @@unique([showroomId, fullName])
+  @@index([showroomId])
+}
+
+// ---------------------------------------------------------------------------
+// PRODUCTS AND STOCK
+// ---------------------------------------------------------------------------
+
+model Category {
+  id       String    @id @default(uuid())
+  name     String    @unique
+  products Product[]
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  sku         String   @unique
+  name        String
+  categoryId  String
+  description String?
+  material    String?
+  dimensions  String?
+  price       Decimal  @db.Decimal(12, 2)
+  imagePath   String? // path of the uploaded file in storage, not an external URL
+  isPublished Boolean  @default(false) // "show on website" switch
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  category      Category        @relation(fields: [categoryId], references: [id])
+  stockLevels   StockLevel[]
+  movements     StockMovement[]
+  transferItems TransferItem[]
+  saleItems     SaleItem[]
+
+  @@index([categoryId])
+  @@index([isPublished, isActive])
+}
+
+// Current quantity per product per location. Never edited by hand: it is updated
+// in the same database transaction that writes the StockMovement row.
+model StockLevel {
+  productId  String
+  locationId String
+  quantity   Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
+  product  Product  @relation(fields: [productId], references: [id])
+  location Location @relation(fields: [locationId], references: [id])
+
+  @@id([productId, locationId])
+  @@index([locationId])
+}
+
+// The ledger: every stock change is a row. Production is reason = PRODUCTION at the workshop.
+model StockMovement {
+  id          String         @id @default(uuid())
+  productId   String
+  locationId  String
+  qtyChange   Int // positive adds stock, negative removes it
+  reason      MovementReason
+  refType     String? // "transfer", "sale", ...
+  refId       String? // id of the transfer or sale that caused it
+  note        String?
+  createdById String
+  createdAt   DateTime       @default(now())
+
+  product   Product  @relation(fields: [productId], references: [id])
+  location  Location @relation(fields: [locationId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@index([productId, locationId])
+  @@index([reason, createdAt])
+  @@index([refType, refId])
+}
+
+// ---------------------------------------------------------------------------
+// TRANSFERS
+// ---------------------------------------------------------------------------
+
+model Transfer {
+  id              String         @id @default(uuid())
+  code            String         @unique
+  fromLocationId  String
+  toLocationId    String
+  status          TransferStatus @default(DRAFT)
+  createdById     String
+  sentAt          DateTime?
+  receivedById    String?
+  receivedAt      DateTime?
+  note            String?
+  discrepancyNote String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  fromLocation Location       @relation("TransferFrom", fields: [fromLocationId], references: [id])
+  toLocation   Location       @relation("TransferTo", fields: [toLocationId], references: [id])
+  createdBy    User           @relation("TransferCreatedBy", fields: [createdById], references: [id])
+  receivedBy   User?          @relation("TransferReceivedBy", fields: [receivedById], references: [id])
+  items        TransferItem[]
+
+  @@index([status, sentAt])
+  @@index([fromLocationId])
+  @@index([toLocationId])
+}
+
+model TransferItem {
+  id          String @id @default(uuid())
+  transferId  String
+  productId   String
+  qtySent     Int
+  qtyReceived Int? // filled in by the receiver
+
+  transfer Transfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@unique([transferId, productId])
+}
+
+// ---------------------------------------------------------------------------
+// SALES AND PAYMENTS
+// ---------------------------------------------------------------------------
+
+model Sale {
+  id             String            @id @default(uuid())
+  code           String            @unique
+  locationId     String // the showroom
+  salespersonId  String // who sold it (from the showroom's list)
+  recordedById   String // which showroom login saved it
+  customerName   String?
+  customerPhone  String?
+  subtotal       Decimal           @db.Decimal(12, 2)
+  discount       Decimal           @default(0) @db.Decimal(12, 2)
+  discountReason String?
+  total          Decimal           @db.Decimal(12, 2)
+  paymentStatus  SalePaymentStatus @default(PENDING)
+  status         SaleStatus        @default(ACTIVE)
+  soldAt         DateTime          @default(now())
+  voidedAt       DateTime?
+  voidedById     String?
+  voidReason     String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  location    Location    @relation(fields: [locationId], references: [id])
+  salesperson Salesperson @relation(fields: [salespersonId], references: [id])
+  recordedBy  User        @relation("SaleRecordedBy", fields: [recordedById], references: [id])
+  voidedBy    User?       @relation("SaleVoidedBy", fields: [voidedById], references: [id])
+  items       SaleItem[]
+  payments    Payment[]
+
+  @@index([locationId, soldAt])
+  @@index([salespersonId, soldAt])
+  @@index([status])
+}
+
+model SaleItem {
+  id        String  @id @default(uuid())
+  saleId    String
+  productId String
+  quantity  Int
+  unitPrice Decimal @db.Decimal(12, 2) // price at the time of sale
+
+  sale    Sale    @relation(fields: [saleId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([saleId])
+  @@index([productId])
+}
+
+model Payment {
+  id                 String             @id @default(uuid())
+  saleId             String
+  amount             Decimal            @db.Decimal(12, 2)
+  method             PaymentMethod
+  referenceNo        String?
+  receiptPath        String? // path in private storage; served with expiring links
+  recordedById       String
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  verifiedById       String?
+  verifiedAt         DateTime?
+  rejectReason       String?
+  ownerNotifiedAt    DateTime? // first alert sent
+  lastReminderAt     DateTime? // last reminder sent
+  escalatedAt        DateTime? // escalated to the backup approver
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  sale       Sale  @relation(fields: [saleId], references: [id])
+  recordedBy User  @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  verifiedBy User? @relation("PaymentVerifiedBy", fields: [verifiedById], references: [id])
+
+  @@index([verificationStatus, createdAt])
+  @@index([saleId])
+}
+
+// ---------------------------------------------------------------------------
+// SETTINGS, NOTIFICATIONS, AUDIT
+// ---------------------------------------------------------------------------
+
+// Small key/value table, e.g. reminder_hours=24, escalation_hours=48,
+// backup_approver_id=<user id>, low_stock_threshold=3
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model NotificationLog {
+  id              String   @id @default(uuid())
+  type            String // "payment_alert", "payment_reminder", "transfer_arrived", ...
+  recipientUserId String?
+  channel         String // "TELEGRAM", "EMAIL", "IN_APP"
+  refType         String?
+  refId           String?
+  status          String // "SENT", "FAILED"
+  error           String?
+  sentAt          DateTime @default(now())
+
+  recipient User? @relation(fields: [recipientUserId], references: [id])
+
+  @@index([type, sentAt])
+  @@index([refType, refId])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String // "CREATE", "UPDATE", "VOID", "VERIFY", "LOGIN", ...
+  tableName String
+  recordId  String
+  oldValue  Json?
+  newValue  Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([tableName, recordId])
+  @@index([userId, createdAt])
+}
