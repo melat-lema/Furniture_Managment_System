@@ -1,21 +1,32 @@
-import { useEffect, useState } from 'react';
-import { api } from './lib/api';
+import { Route, Routes } from 'react-router-dom';
+import AppLayout from './layouts/AppLayout';
+import DashboardPage from './pages/DashboardPage';
+import LoginPage from './pages/LoginPage';
+import NotFoundPage from './pages/NotFoundPage';
+import GuestOnly from './routes/GuestOnly';
+import RequireAuth from './routes/RequireAuth';
 
 export default function App() {
-  const [status, setStatus] = useState('Checking...');
-
-  useEffect(() => {
-    api
-      .get('/health')
-      .then(() => setStatus('Frontend, backend and database are connected'))
-      .catch(() => setStatus('Cannot reach the backend'));
-  }, []);
-
   return (
-    <div className="flex min-h-screen items-center justify-center bg-stone-100">
-      <h1 className="rounded-lg bg-white p-6 text-xl font-semibold shadow">
-        {status}
-      </h1>
-    </div>
+    <Routes>
+      {/* Public: only for people who are NOT signed in */}
+      <Route element={<GuestOnly />}>
+        <Route path="/login" element={<LoginPage />} />
+      </Route>
+
+      {/* Private: everything below needs a login */}
+      <Route element={<RequireAuth />}>
+        <Route element={<AppLayout />}>
+          <Route index element={<DashboardPage />} />
+
+          {/* Day 4+: pages limited to certain roles, for example:
+              <Route element={<RequireAuth roles={['OWNER']} />}>
+                <Route path="products" element={<ProductsPage />} />
+              </Route> */}
+
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
+      </Route>
+    </Routes>
   );
 }
