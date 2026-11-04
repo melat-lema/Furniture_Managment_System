@@ -19,6 +19,8 @@ const STATUS_DEFAULTS: Record<number, { code: string; message: string }> = {
   403: { code: 'FORBIDDEN', message: "You don't have permission to do this." },
   404: { code: ErrorCode.NOT_FOUND, message: 'We could not find what you asked for.' },
   409: { code: ErrorCode.CONFLICT, message: 'This action conflicts with existing data.' },
+  413: { code: ErrorCode.FILE_TOO_LARGE, message: 'That file is too big. The maximum size is 5 MB.' },
+  415: { code: ErrorCode.INVALID_FILE, message: 'That type of file is not supported.' },
   429: { code: ErrorCode.RATE_LIMITED, message: 'Too many requests. Please wait a moment and try again.' },
 };
 

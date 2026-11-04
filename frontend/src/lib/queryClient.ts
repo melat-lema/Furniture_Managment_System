@@ -5,7 +5,8 @@ import { notifyError } from './notify';
 /**
  * Default error handling for ALL data loading and saving:
  *  - failed loads and saves show a toast automatically,
- *  - a query can opt out with  meta: { silent: true }  when it shows its own error UI,
+ *  - a query or mutation can opt out with  meta: { silent: true }  when it shows its own error UI
+ *    (forms do this, because they put errors under the fields),
  *  - temporary problems (no internet, 5xx) are retried twice; other errors are not retried.
  */
 export const queryClient = new QueryClient({
@@ -16,7 +17,10 @@ export const queryClient = new QueryClient({
     },
   }),
   mutationCache: new MutationCache({
-    onError: (error) => notifyError(error, 'Could not save your changes'),
+    onError: (error, _variables, _context, mutation) => {
+      if (mutation.meta?.silent) return;
+      notifyError(error, 'Could not complete that action');
+    },
   }),
   defaultOptions: {
     queries: {

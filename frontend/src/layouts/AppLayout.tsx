@@ -64,7 +64,17 @@ function Sidebar({ user, signingOut, onNavigate, onLogout }: SidebarProps) {
       </nav>
 
       <div className="border-t border-white/10 p-4">
-        <div className="flex items-center gap-3 rounded-xl bg-white/[0.03] p-3">
+        <NavLink
+          to="/account"
+          onClick={onNavigate}
+          title="My account"
+          className={({ isActive }) =>
+            cn(
+              'flex items-center gap-3 rounded-xl p-3 transition',
+              isActive ? 'bg-gold-500/10 ring-1 ring-gold-500/30' : 'bg-white/[0.03] hover:bg-white/[0.06]',
+            )
+          }
+        >
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold-500/15 font-display text-lg font-semibold text-gold-300 ring-1 ring-gold-500/30">
             {user.fullName.charAt(0).toUpperCase()}
           </span>
@@ -75,7 +85,7 @@ function Sidebar({ user, signingOut, onNavigate, onLogout }: SidebarProps) {
               {user.locationName ? ` · ${user.locationName}` : ''}
             </p>
           </div>
-        </div>
+        </NavLink>
         <button
           type="button"
           onClick={onLogout}
