@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { ErrorCode } from '../common/constants';
+import { canManageProducts } from '../common/permissions';
 import type { AuthUser } from '../common/types/auth-user';
 import { duplicateError, fieldError, notFound } from '../common/utils/field-error';
 import { type Paginated, pageArgs } from '../common/utils/pagination';
@@ -16,6 +17,16 @@ const PRODUCT_INCLUDE = { category: { select: { id: true, name: true } } } satis
 type ProductRow = Prisma.ProductGetPayload<{ include: typeof PRODUCT_INCLUDE }>;
 type ProductView = ProductRow & { imageUrl: string | null };
 
+
+/** Reads one text or number field out of a JSON value stored in the audit log. */
+function jsonField(value: Prisma.JsonValue | null, key: string): string | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const found = (value as Record<string, unknown>)[key];
+    if (typeof found === 'string' || typeof found === 'number') return String(found);
+  }
+  return null;
+}
+
 @Injectable()
 export class ProductsService {
   constructor(
@@ -30,9 +41,12 @@ export class ProductsService {
 
   // ----------------------------------------------------------------- read
   async list(query: ListProductsQueryDto, user: AuthUser): Promise<Paginated<ProductView>> {
-    // Only the owner can see inactive products.
-    const activeFilter: Prisma.ProductWhereInput =
-      user.role !== 'OWNER' ? { isActive: true } : query.isActive !== undefined ? { isActive: query.isActive } : {};
+    // Only people who manage the catalog (owner, workshop manager) can see inactive products.
+    const activeFilter: Prisma.ProductWhereInput = !canManageProducts(user.role)
+      ? { isActive: true }
+      : query.isActive !== undefined
+        ? { isActive: query.isActive }
+        : {};
 
     const where: Prisma.ProductWhereInput = {
       ...activeFilter,
@@ -62,8 +76,50 @@ export class ProductsService {
 
   async get(id: string, user: AuthUser) {
     const row = await this.prisma.product.findUnique({ where: { id }, include: PRODUCT_INCLUDE });
-    if (!row || (!row.isActive && user.role !== 'OWNER')) throw notFound('That product');
+    if (!row || (!row.isActive && !canManageProducts(user.role))) throw notFound('That product');
     return this.present(row);
+  }
+
+
+  // ----------------------------------------------------------- price changes
+  /**
+   * The last price changes, newest first. Because the workshop manager can set prices too,
+   * the owner sees every change here, with who made it.
+   */
+  async priceChanges(limit = 10) {
+    const rows = await this.prisma.auditLog.findMany({
+      where: { tableName: 'Product', action: 'UPDATE' },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      include: { user: { select: { fullName: true } } },
+    });
+
+    const changes: Array<{
+      id: string;
+      productId: string;
+      name: string | null;
+      oldPrice: string;
+      newPrice: string;
+      changedBy: string;
+      at: Date;
+    }> = [];
+
+    for (const row of rows) {
+      const oldPrice = jsonField(row.oldValue, 'price');
+      const newPrice = jsonField(row.newValue, 'price');
+      if (oldPrice === null || newPrice === null || Number(oldPrice) === Number(newPrice)) continue;
+      changes.push({
+        id: row.id,
+        productId: row.recordId,
+        name: jsonField(row.newValue, 'name'),
+        oldPrice,
+        newPrice,
+        changedBy: row.user?.fullName ?? 'Unknown',
+        at: row.createdAt,
+      });
+      if (changes.length >= limit) break;
+    }
+    return changes;
   }
 
   // ---------------------------------------------------------------- write

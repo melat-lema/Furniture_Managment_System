@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Patch, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
+import { PRODUCT_MANAGERS } from '../common/permissions';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { IdParam } from '../common/decorators/id-param.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -17,19 +18,19 @@ export class CategoriesController {
     return this.categories.list();
   }
 
-  @Roles('OWNER')
+  @Roles(...PRODUCT_MANAGERS)
   @Post()
   create(@Body() dto: CategoryDto, @CurrentUser() user: AuthUser, @Req() req: Request) {
     return this.categories.create(dto, user, req.ip ?? null);
   }
 
-  @Roles('OWNER')
+  @Roles(...PRODUCT_MANAGERS)
   @Patch(':id')
   update(@IdParam() id: string, @Body() dto: CategoryDto, @CurrentUser() user: AuthUser, @Req() req: Request) {
     return this.categories.update(id, dto, user, req.ip ?? null);
   }
 
-  @Roles('OWNER')
+  @Roles(...PRODUCT_MANAGERS)
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@IdParam() id: string, @CurrentUser() user: AuthUser, @Req() req: Request): Promise<void> {

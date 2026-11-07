@@ -36,9 +36,11 @@ export function handleFormError<T extends FieldValues>(
   if (matched && !trouble) return null;
 
   const reference = error.isServer && error.requestId ? ` (Ref: ${error.requestId.slice(0, 8)})` : '';
+  // When the server pointed at fields that are not visible inputs (for example a list line), say what it said.
+  const detail = !matched && error.fieldErrors.length > 0 ? error.fieldErrors[0].message : error.message;
   return {
     title: titleFor(error.status, error.isNetwork),
-    message: `${error.message}${reference}`,
+    message: `${detail}${reference}`,
     tone: error.status === 409 || error.status === 429 || error.status === 403 ? 'warning' : 'error',
   };
 }

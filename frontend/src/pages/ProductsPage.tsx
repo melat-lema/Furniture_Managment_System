@@ -19,7 +19,7 @@ const CONTROL =
 
 export default function ProductsPage() {
   const { user } = useAuth();
-  const isOwner = user?.role === 'OWNER';
+  const canManage = user?.role === 'OWNER' || user?.role === 'WORKSHOP_MANAGER';
 
   const [search, setSearch] = useState('');
   const [categoryId, setCategoryId] = useState('');
@@ -31,7 +31,7 @@ export default function ProductsPage() {
   const { data, isPending, isFetching, error, refetch } = useProducts({
     search: debouncedSearch,
     categoryId,
-    isActive: isOwner ? isActive : '',
+    isActive: canManage ? isActive : '',
     page,
   });
 
@@ -49,9 +49,9 @@ export default function ProductsPage() {
     <div className="space-y-6 animate-fade-up">
       <PageHeader
         title="Products"
-        description={isOwner ? 'Your catalog: details, photos and what shows on the website.' : 'The furniture catalog.'}
+        description={canManage ? 'Your catalog: details, photos and what shows on the website.' : 'The furniture catalog.'}
         actions={
-          isOwner && (
+          canManage && (
             <Button icon={<Plus className="h-4 w-4" aria-hidden="true" />} onClick={() => setEditing('new')}>
               Add product
             </Button>
@@ -90,7 +90,7 @@ export default function ProductsPage() {
             </option>
           ))}
         </select>
-        {isOwner && (
+        {canManage && (
           <select
             aria-label="Filter by status"
             value={isActive}
@@ -119,13 +119,13 @@ export default function ProductsPage() {
         <EmptyState
           icon={Armchair}
           title={filtered ? 'No products match your search' : 'No products yet'}
-          text={filtered ? 'Try a different search or clear the filters.' : isOwner ? 'Add your first product.' : 'Products will appear here once the owner adds them.'}
+          text={filtered ? 'Try a different search or clear the filters.' : canManage ? 'Add your first product.' : 'Products will appear here once the owner adds them.'}
           action={
             filtered ? (
               <Button variant="secondary" onClick={clearFilters}>
                 Clear filters
               </Button>
-            ) : isOwner ? (
+            ) : canManage ? (
               <Button onClick={() => setEditing('new')}>Add product</Button>
             ) : undefined
           }
@@ -161,7 +161,7 @@ export default function ProductsPage() {
                   )}
                   <div className="mt-auto flex items-center justify-between pt-4">
                     <p className="text-lg font-semibold text-gold-300">{formatMoney(product.price)}</p>
-                    {isOwner && (
+                    {canManage && (
                       <Button variant="secondary" size="sm" icon={<Pencil className="h-3.5 w-3.5" aria-hidden="true" />} onClick={() => setEditing(product)}>
                         Edit
                       </Button>
@@ -177,7 +177,7 @@ export default function ProductsPage() {
         </div>
       ) : null}
 
-      {isOwner && (
+      {canManage && (
         <ProductFormModal open={editing !== null} onClose={() => setEditing(null)} product={editing === 'new' ? null : editing} />
       )}
     </div>

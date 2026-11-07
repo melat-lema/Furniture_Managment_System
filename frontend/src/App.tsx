@@ -7,6 +7,8 @@ import LocationsPage from './pages/LocationsPage';
 import LoginPage from './pages/LoginPage';
 import NotFoundPage from './pages/NotFoundPage';
 import ProductsPage from './pages/ProductsPage';
+import RecordProductionPage from './pages/RecordProductionPage';
+import StockPage from './pages/StockPage';
 import UsersPage from './pages/UsersPage';
 import GuestOnly from './routes/GuestOnly';
 import RequireAuth from './routes/RequireAuth';
@@ -25,12 +27,22 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="account" element={<AccountPage />} />
 
-          {/* Every role can browse the catalog; only the owner can change it (the page and the API both enforce this) */}
+          {/* Every role: the catalog (read-only except for the owner and workshop manager) and its own stock */}
           <Route path="products" element={<ProductsPage />} />
+          <Route path="stock" element={<StockPage />} />
+
+          {/* Owner and workshop manager: they define the catalog (products, prices, categories) */}
+          <Route element={<RequireAuth roles={['OWNER', 'WORKSHOP_MANAGER']} />}>
+            <Route path="categories" element={<CategoriesPage />} />
+          </Route>
+
+          {/* Workshop manager only: the person in the workshop records what is produced */}
+          <Route element={<RequireAuth roles={['WORKSHOP_MANAGER']} />}>
+            <Route path="production" element={<RecordProductionPage />} />
+          </Route>
 
           {/* Owner only */}
           <Route element={<RequireAuth roles={['OWNER']} />}>
-            <Route path="categories" element={<CategoriesPage />} />
             <Route path="locations" element={<LocationsPage />} />
             <Route path="users" element={<UsersPage />} />
           </Route>

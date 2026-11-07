@@ -13,6 +13,7 @@ import { HealthController } from './health.controller';
 import { LocationsModule } from './locations/locations.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
+import { StockModule } from './stock/stock.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -28,6 +29,7 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     CategoriesModule,
     ProductsModule,
+    StockModule,
   ],
   controllers: [HealthController],
   providers: [
