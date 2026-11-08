@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import ConnectionStatus from '../components/ConnectionStatus';
 import { useAuth } from '../features/auth/useAuth';
 import PriceChangesCard from '../features/products/PriceChangesCard';
+import TransferSummaryCards from '../features/transfers/TransferSummaryCards';
 import RecentActivityCard from '../features/stock/RecentActivityCard';
 import StockSummaryCards from '../features/stock/StockSummaryCards';
 import { ROLE_LABELS, type Role } from '../types/auth';
@@ -16,15 +17,24 @@ interface Shortcut {
 const SHORTCUTS: Record<Role, Shortcut[]> = {
   OWNER: [
     { to: '/stock', label: 'Stock', icon: Warehouse },
+    { to: '/transfers', label: 'Transfers', icon: ArrowRightLeft },
     { to: '/products', label: 'Products', icon: Package },
   ],
   WORKSHOP_MANAGER: [
     { to: '/production', label: 'Record production', icon: Hammer },
+    { to: '/transfers/new', label: 'New transfer', icon: ArrowRightLeft },
     { to: '/products', label: 'Products', icon: Package },
     { to: '/stock', label: 'Stock', icon: Warehouse },
   ],
-  STORE_MANAGER: [{ to: '/stock', label: 'Stock', icon: Warehouse }],
-  SHOWROOM: [{ to: '/stock', label: 'Stock', icon: Warehouse }],
+  STORE_MANAGER: [
+    { to: '/transfers', label: 'Transfers', icon: ArrowRightLeft },
+    { to: '/transfers/new', label: 'New transfer', icon: ArrowRightLeft },
+    { to: '/stock', label: 'Stock', icon: Warehouse },
+  ],
+  SHOWROOM: [
+    { to: '/transfers', label: 'Transfers', icon: ArrowRightLeft },
+    { to: '/stock', label: 'Stock', icon: Warehouse },
+  ],
 };
 
 interface PlannedCard {
@@ -36,16 +46,12 @@ interface PlannedCard {
 /** Placeholders for what is still to come. Each card disappears when the feature is built. */
 const PLANNED: Record<Role, PlannedCard[]> = {
   OWNER: [
-    { icon: ArrowRightLeft, title: 'Transfers', text: 'Follow goods moving between the workshop, store and showrooms.' },
     { icon: ReceiptText, title: 'Payments to verify', text: 'Receipts waiting for your approval, with overdue alerts.' },
     { icon: ShoppingBag, title: 'Sales by salesperson', text: 'Who is selling what, and where.' },
   ],
-  WORKSHOP_MANAGER: [{ icon: ArrowRightLeft, title: 'Dispatch', text: 'Send items to the store or straight to a showroom.' }],
-  STORE_MANAGER: [{ icon: ArrowRightLeft, title: 'Incoming transfers', text: 'Confirm what arrived from the workshop.' }],
-  SHOWROOM: [
-    { icon: ShoppingBag, title: 'New sale', text: 'Record a sale, pick the salesperson and upload the receipt.' },
-    { icon: ArrowRightLeft, title: 'Incoming transfers', text: 'Confirm deliveries to your showroom.' },
-  ],
+  WORKSHOP_MANAGER: [],
+  STORE_MANAGER: [],
+  SHOWROOM: [{ icon: ShoppingBag, title: 'New sale', text: 'Record a sale, pick the salesperson and upload the receipt.' }],
 };
 
 function greeting(): string {
@@ -88,6 +94,8 @@ export default function DashboardPage() {
         <StockSummaryCards />
       </section>
 
+      <TransferSummaryCards role={user.role} />
+
       {user.role === 'OWNER' && (
         <div className="grid gap-6 xl:grid-cols-2">
           <RecentActivityCard />
@@ -97,20 +105,22 @@ export default function DashboardPage() {
 
       <ConnectionStatus />
 
-      <section aria-label="Coming next">
-        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-500">Coming next</h2>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {PLANNED[user.role].map(({ icon: Icon, title, text }) => (
-            <div key={title} className="rounded-2xl border border-dashed border-white/10 p-5">
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/5 text-zinc-500">
-                <Icon className="h-5 w-5" aria-hidden="true" />
-              </span>
-              <h3 className="mt-4 font-semibold text-zinc-300">{title}</h3>
-              <p className="mt-1 text-sm text-zinc-500">{text}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+      {PLANNED[user.role].length > 0 && (
+        <section aria-label="Coming next">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-500">Coming next</h2>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {PLANNED[user.role].map(({ icon: Icon, title, text }) => (
+              <div key={title} className="rounded-2xl border border-dashed border-white/10 p-5">
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/5 text-zinc-500">
+                  <Icon className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <h3 className="mt-4 font-semibold text-zinc-300">{title}</h3>
+                <p className="mt-1 text-sm text-zinc-500">{text}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

@@ -45,6 +45,9 @@ export const ErrorCode = {
 
   // Day 5
   INSUFFICIENT_STOCK: 'INSUFFICIENT_STOCK',
+
+  // Day 7 and 8
+  TRANSFER_STATE: 'TRANSFER_STATE',
 } as const;
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB

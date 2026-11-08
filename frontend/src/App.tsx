@@ -9,6 +9,9 @@ import NotFoundPage from './pages/NotFoundPage';
 import ProductsPage from './pages/ProductsPage';
 import RecordProductionPage from './pages/RecordProductionPage';
 import StockPage from './pages/StockPage';
+import TransferDetailPage from './pages/TransferDetailPage';
+import TransferFormPage from './pages/TransferFormPage';
+import TransfersPage from './pages/TransfersPage';
 import UsersPage from './pages/UsersPage';
 import GuestOnly from './routes/GuestOnly';
 import RequireAuth from './routes/RequireAuth';
@@ -30,6 +33,14 @@ export default function App() {
           {/* Every role: the catalog (read-only except for the owner and workshop manager) and its own stock */}
           <Route path="products" element={<ProductsPage />} />
           <Route path="stock" element={<StockPage />} />
+          <Route path="transfers" element={<TransfersPage />} />
+          <Route path="transfers/:id" element={<TransferDetailPage />} />
+
+          {/* Only the workshop and the store send goods */}
+          <Route element={<RequireAuth roles={['WORKSHOP_MANAGER', 'STORE_MANAGER']} />}>
+            <Route path="transfers/new" element={<TransferFormPage />} />
+            <Route path="transfers/:id/edit" element={<TransferFormPage />} />
+          </Route>
 
           {/* Owner and workshop manager: they define the catalog (products, prices, categories) */}
           <Route element={<RequireAuth roles={['OWNER', 'WORKSHOP_MANAGER']} />}>

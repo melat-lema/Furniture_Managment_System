@@ -125,6 +125,9 @@ async function setup() {
 }
 
 async function cleanup(): Promise<void> {
+  await prisma.transfer.deleteMany({
+    where: { OR: [{ fromLocation: { name: { startsWith: tag } } }, { toLocation: { name: { startsWith: tag } } }] },
+  });
   const products = await prisma.product.findMany({ where: { sku: { startsWith: tag } }, select: { id: true } });
   const productIds = products.map((product) => product.id);
   await prisma.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
@@ -252,10 +255,84 @@ async function run(): Promise<void> {
   const history = await call(workshopMgr, 'GET', `/stock/movements?locationId=${workshop.id}`);
   record('Workshop history lists the production entries', (history.body?.items ?? []).filter((m: { reason: string }) => m.reason === 'PRODUCTION').length >= 2, 'fewer than 2 PRODUCTION rows');
 
+  // ---- transfers
+  const send = (who: Account, id: string) => call(who, 'POST', `/transfers/${id}/send`);
+  const receive = (who: Account, id: string, body: unknown) => call(who, 'POST', `/transfers/${id}/receive`, body);
+
+  const draft = await call(workshopMgr, 'POST', '/transfers', { toLocationId: store.id, items: [{ productId: pW, quantity: 4 }], note: 'role check' });
+  expectStatus('WORKSHOP_MANAGER: can create a transfer to the store', draft, 201);
+  record('...it starts as a draft', draft.body?.status === 'DRAFT', `got ${draft.body?.status}`);
+  const t1: string = draft.body?.id;
+
+  expectStatus('SHOWROOM: cannot create a transfer', await call(showroomAcc, 'POST', '/transfers', { toLocationId: store.id, items: [{ productId: pW, quantity: 1 }] }), 403, 'FORBIDDEN_ROLE');
+  expectStatus('OWNER: cannot create a transfer', await call(owner, 'POST', '/transfers', { toLocationId: store.id, items: [{ productId: pW, quantity: 1 }] }), 403, 'FORBIDDEN_ROLE');
+  const toSelf = await call(workshopMgr, 'POST', '/transfers', { toLocationId: workshop.id, items: [{ productId: pW, quantity: 1 }] });
+  expectStatus('Route rule: a place cannot send to itself', toSelf, 400, 'VALIDATION_ERROR');
+  record('...and the error points at the destination', toSelf.body?.errors?.[0]?.field === 'toLocationId', JSON.stringify(toSelf.body?.errors));
+  expectStatus('Route rule: a store cannot send back to the workshop', await call(storeMgr, 'POST', '/transfers', { toLocationId: workshop.id, items: [{ productId: pW, quantity: 1 }] }), 400, 'VALIDATION_ERROR');
+  expectStatus('Cannot send more than the sender has', await call(workshopMgr, 'POST', '/transfers', { toLocationId: store.id, items: [{ productId: pW, quantity: 1000 }] }), 409, 'INSUFFICIENT_STOCK');
+  expectStatus('The same product twice is rejected', await call(workshopMgr, 'POST', '/transfers', { toLocationId: store.id, items: [{ productId: pW, quantity: 1 }, { productId: pW, quantity: 2 }] }), 400, 'VALIDATION_ERROR');
+  expectStatus('The store cannot see the workshop draft', await call(storeMgr, 'GET', `/transfers/${t1}`), 404);
+  expectStatus('The showroom cannot see an unrelated transfer', await call(showroomAcc, 'GET', `/transfers/${t1}`), 404);
+  expectStatus('WORKSHOP_MANAGER: can edit a draft', await call(workshopMgr, 'PATCH', `/transfers/${t1}`, { items: [{ productId: pW, quantity: 4 }], note: 'edited' }), 200);
+  expectStatus('SHOWROOM: cannot send a transfer', await send(showroomAcc, t1), 403, 'FORBIDDEN_ROLE');
+
+  const sent = await send(workshopMgr, t1);
+  expectStatus('WORKSHOP_MANAGER: can send the draft', sent, 200);
+  record('...it is now in transit', sent.body?.status === 'IN_TRANSIT', `got ${sent.body?.status}`);
+  const afterSend = await levelOf(workshopMgr, workshop.id);
+  record('...the workshop stock went down by 4 (12 to 8)', afterSend === 8, `got ${afterSend}`);
+  expectStatus('A sent transfer cannot be sent again', await send(workshopMgr, t1), 409, 'TRANSFER_STATE');
+  expectStatus('A sent transfer cannot be edited', await call(workshopMgr, 'PATCH', `/transfers/${t1}`, { note: 'late' }), 409, 'TRANSFER_STATE');
+  expectStatus('WORKSHOP_MANAGER: cannot receive (the workshop only sends)', await receive(workshopMgr, t1, { items: [{ productId: pW, quantityReceived: 4 }] }), 403, 'FORBIDDEN_ROLE');
+  expectStatus('SHOWROOM: cannot receive a transfer that is not theirs', await receive(showroomAcc, t1, { items: [{ productId: pW, quantityReceived: 4 }] }), 404);
+
+  const noNote = await receive(storeMgr, t1, { items: [{ productId: pW, quantityReceived: 3 }] });
+  expectStatus('A difference needs an explanation', noNote, 400, 'VALIDATION_ERROR');
+  record('...and the error points at the note', noNote.body?.errors?.[0]?.field === 'note', JSON.stringify(noNote.body?.errors));
+  expectStatus('Cannot receive more than was sent', await receive(storeMgr, t1, { items: [{ productId: pW, quantityReceived: 5 }], note: 'x' }), 400, 'VALIDATION_ERROR');
+  const got = await receive(storeMgr, t1, { items: [{ productId: pW, quantityReceived: 3 }], note: '1 arrived damaged' });
+  expectStatus('STORE_MANAGER: can receive with a difference', got, 200);
+  record('...it is marked received with differences', got.body?.status === 'RECEIVED_WITH_DISCREPANCY', `got ${got.body?.status}`);
+  const storeAfter = await levelOf(storeMgr, store.id);
+  record('...only what arrived was added to the store (2 + 3 = 5)', storeAfter === 5, `got ${storeAfter}`);
+  expectStatus('A received transfer cannot be received again', await receive(storeMgr, t1, { items: [{ productId: pW, quantityReceived: 4 }], note: 'x' }), 409, 'TRANSFER_STATE');
+
+  const t2 = await call(storeMgr, 'POST', '/transfers', { toLocationId: showroom.id, items: [{ productId: pW, quantity: 2 }], sendNow: true });
+  expectStatus('STORE_MANAGER: can create and send to a showroom in one step', t2, 201);
+  record('...it is in transit', t2.body?.status === 'IN_TRANSIT', `got ${t2.body?.status}`);
+  const storeAfterSend = await levelOf(storeMgr, store.id);
+  record('...the store stock went down by 2 (5 to 3)', storeAfterSend === 3, `got ${storeAfterSend}`);
+  const rec2 = await receive(showroomAcc, t2.body?.id, { items: [{ productId: pW, quantityReceived: 2 }] });
+  expectStatus('SHOWROOM: can receive exactly what was sent', rec2, 200);
+  record('...it is marked received', rec2.body?.status === 'RECEIVED', `got ${rec2.body?.status}`);
+  const showroomAfter = await levelOf(showroomAcc, showroom.id);
+  record('...the showroom stock is now 3 (1 + 2)', showroomAfter === 3, `got ${showroomAfter}`);
+
+  const t3 = await call(workshopMgr, 'POST', '/transfers', { toLocationId: showroom.id, items: [{ productId: pW, quantity: 2 }], sendNow: true });
+  expectStatus('WORKSHOP_MANAGER: can send straight to a showroom', t3, 201);
+  const wsMid = await levelOf(workshopMgr, workshop.id);
+  record('...the workshop stock went down by 2 (8 to 6)', wsMid === 6, `got ${wsMid}`);
+  expectStatus('OWNER: can cancel a transfer on the road', await call(owner, 'POST', `/transfers/${t3.body?.id}/cancel`, { reason: 'role check' }), 200);
+  const wsBack = await levelOf(workshopMgr, workshop.id);
+  record('...the stock came back to the workshop (6 to 8)', wsBack === 8, `got ${wsBack}`);
+  expectStatus('A cancelled transfer cannot be received', await receive(showroomAcc, t3.body?.id, { items: [{ productId: pW, quantityReceived: 2 }] }), 409, 'TRANSFER_STATE');
+
+  for (const role of ROLES) {
+    expectStatus(`${role}: can read the transfer list`, await call(accounts[role], 'GET', '/transfers'), 200);
+    expectStatus(`${role}: can read the transfer summary`, await call(accounts[role], 'GET', '/transfers/summary'), 200);
+  }
+  const showroomList = await call(showroomAcc, 'GET', '/transfers');
+  const onlyOwn = (showroomList.body?.items ?? []).every((row: { fromLocation: { id: string }; toLocation: { id: string } }) => row.fromLocation.id === showroom.id || row.toLocation.id === showroom.id);
+  record('The showroom only sees transfers that involve it', onlyOwn, 'it saw someone else\'s transfer');
+
   // ---- ledger integrity: running total must equal the sum of the ledger
   const sum = await prisma.stockMovement.aggregate({ where: { productId: pW, locationId: workshop.id }, _sum: { qtyChange: true } });
   const level = await prisma.stockLevel.findUnique({ where: { productId_locationId: { productId: pW, locationId: workshop.id } } });
   record('Ledger total equals the stock level (workshop)', sum._sum.qtyChange === level?.quantity, `ledger ${sum._sum.qtyChange} vs level ${level?.quantity}`);
+  const storeSum = await prisma.stockMovement.aggregate({ where: { productId: pW, locationId: store.id }, _sum: { qtyChange: true } });
+  const storeLevel = await prisma.stockLevel.findUnique({ where: { productId_locationId: { productId: pW, locationId: store.id } } });
+  record('Ledger total equals the stock level (store)', storeSum._sum.qtyChange === storeLevel?.quantity, `ledger ${storeSum._sum.qtyChange} vs level ${storeLevel?.quantity}`);
 
   // ---- accounts: protection and instant sign-out
   expectStatus('OWNER cannot deactivate their own account', await call(owner, 'PATCH', `/users/${owner.id}/active`, { isActive: false }), 409, 'CANNOT_MODIFY_SELF');

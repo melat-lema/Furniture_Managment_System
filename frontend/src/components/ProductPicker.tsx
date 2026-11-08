@@ -4,13 +4,15 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { api } from '../lib/api';
 import { cn } from '../lib/cn';
-import type { Paginated, ProductRecord } from '../types/api';
+import type { Paginated, ProductRecord, StockLevelsPage } from '../types/api';
 
 export interface ProductOption {
   id: string;
   name: string;
   sku: string;
   imageUrl: string | null;
+  /** only set when the picker lists stock of one location */
+  available?: number;
 }
 
 interface ProductPickerProps {
@@ -20,6 +22,8 @@ interface ProductPickerProps {
   error?: string;
   disabled?: boolean;
   placeholder?: string;
+  /** When set, only products that are in stock at this location are listed, with how many. */
+  stockLocationId?: string;
 }
 
 function Thumb({ url }: { url: string | null }) {
@@ -40,6 +44,7 @@ export default function ProductPicker({
   error,
   disabled,
   placeholder = 'Search by name or code',
+  stockLocationId,
 }: ProductPickerProps) {
   const id = useId();
   const wrapper = useRef<HTMLDivElement>(null);
@@ -49,17 +54,36 @@ export default function ProductPicker({
   const debounced = useDebouncedValue(query, 250);
 
   const { data, isFetching, isError } = useQuery({
-    queryKey: ['product-picker', debounced],
+    queryKey: ['product-picker', stockLocationId ?? 'catalog', debounced],
     enabled: open && !value,
-    queryFn: async () =>
-      (
-        await api.get<Paginated<ProductRecord>>('/products', {
-          params: { pageSize: 8, isActive: true, ...(debounced && { search: debounced }) },
-        })
-      ).data,
+    queryFn: async (): Promise<Array<ProductOption & { category: string }>> => {
+      if (stockLocationId) {
+        const { data: page } = await api.get<StockLevelsPage>('/stock/levels', {
+          params: { locationId: stockLocationId, pageSize: 8, ...(debounced && { search: debounced }) },
+        });
+        return page.items.map((row) => ({
+          id: row.product.id,
+          name: row.product.name,
+          sku: row.product.sku,
+          imageUrl: row.product.imageUrl,
+          available: row.quantity,
+          category: row.product.category.name,
+        }));
+      }
+      const { data: page } = await api.get<Paginated<ProductRecord>>('/products', {
+        params: { pageSize: 8, isActive: true, ...(debounced && { search: debounced }) },
+      });
+      return page.items.map((product) => ({
+        id: product.id,
+        name: product.name,
+        sku: product.sku,
+        imageUrl: product.imageUrl,
+        category: product.category.name,
+      }));
+    },
     meta: { silent: true },
   });
-  const results = data?.items ?? [];
+  const results = data ?? [];
 
   // close the list when clicking elsewhere
   useEffect(() => {
@@ -71,8 +95,8 @@ export default function ProductPicker({
     return () => document.removeEventListener('mousedown', onPointerDown);
   }, [open]);
 
-  const choose = (product: ProductRecord) => {
-    onChange({ id: product.id, name: product.name, sku: product.sku, imageUrl: product.imageUrl });
+  const choose = (product: ProductOption) => {
+    onChange({ id: product.id, name: product.name, sku: product.sku, imageUrl: product.imageUrl, available: product.available });
     setQuery('');
     setOpen(false);
   };
@@ -111,7 +135,10 @@ export default function ProductPicker({
           <Thumb url={value.imageUrl} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-zinc-100">{value.name}</p>
-            <p className="truncate text-xs text-zinc-500">{value.sku}</p>
+            <p className="truncate text-xs text-zinc-500">
+              {value.sku}
+              {value.available !== undefined && ` · ${value.available} in stock`}
+            </p>
           </div>
           {!disabled && (
             <button
@@ -183,9 +210,12 @@ export default function ProductPicker({
                       <span className="min-w-0">
                         <span className="block truncate text-sm text-zinc-100">{product.name}</span>
                         <span className="block truncate text-xs text-zinc-500">
-                          {product.sku} · {product.category.name}
+                          {product.sku} · {product.category}
                         </span>
                       </span>
+                      {product.available !== undefined && (
+                        <span className="ml-auto shrink-0 text-xs font-semibold text-gold-300">{product.available} in stock</span>
+                      )}
                     </button>
                   </li>
                 ))

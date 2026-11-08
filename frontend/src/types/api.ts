@@ -135,3 +135,44 @@ export interface PriceChange {
   changedBy: string;
   at: string;
 }
+
+// ------------------------------------------------------------------ Day 7 and 8: transfers
+export type TransferStatus = 'DRAFT' | 'IN_TRANSIT' | 'RECEIVED' | 'RECEIVED_WITH_DISCREPANCY' | 'CANCELLED';
+
+export interface TransferListRow {
+  id: string;
+  code: string;
+  status: TransferStatus;
+  note: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  receivedAt: string | null;
+  fromLocation: LocationSummary;
+  toLocation: LocationSummary;
+  lines: number;
+  unitsSent: number;
+  unitsReceived: number | null;
+}
+
+export interface TransferItemView {
+  productId: string;
+  product: { id: string; name: string; sku: string; imageUrl: string | null };
+  qtySent: number;
+  qtyReceived: number | null;
+}
+
+export interface TransferDetail extends TransferListRow {
+  discrepancyNote: string | null;
+  createdBy: { id: string; fullName: string };
+  receivedBy: { id: string; fullName: string } | null;
+  items: TransferItemView[];
+  /** what the signed-in person may do with it right now */
+  can: { edit: boolean; send: boolean; cancel: boolean; receive: boolean };
+}
+
+export interface TransferSummary {
+  inTransit: number;
+  incomingWaiting: number;
+  outgoingDrafts: number;
+  recentDiscrepancies: number;
+}
