@@ -113,6 +113,24 @@ export class AllExceptionsFilter implements ExceptionFilter {
   private fromPrisma(error: Prisma.PrismaClientKnownRequestError): ErrorBody {
     if (DB_UNREACHABLE_CODES.has(error.code)) return this.databaseUnavailable(error.message);
 
+    // A rule enforced by the database itself (for example "stock can never be negative").
+    // This can only happen when two people act at the same moment, so say it in plain words.
+    if (/violates check constraint/i.test(error.message)) {
+      if (error.message.includes('stock_level_non_negative')) {
+        return {
+          statusCode: 409,
+          code: ErrorCode.INSUFFICIENT_STOCK,
+          message: 'The stock changed while you were working and there is no longer enough. Please refresh and try again.',
+        };
+      }
+      return {
+        statusCode: 400,
+        code: ErrorCode.CHECK_VIOLATION,
+        message: "That change isn't allowed by the business rules.",
+        detail: this.devOnly(error.message),
+      };
+    }
+
     switch (error.code) {
       case 'P2002': {
         const target = error.meta?.target;

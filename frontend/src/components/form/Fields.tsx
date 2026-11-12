@@ -38,7 +38,7 @@ function Shell({ id, label, hint, error, required, children }: ShellProps) {
 }
 
 const CONTROL =
-  'w-full rounded-xl border bg-black/40 px-4 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:ring-4 disabled:cursor-not-allowed disabled:opacity-50';
+  'w-full rounded-xl border bg-black/40 px-4 py-3 text-base sm:text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:ring-4 disabled:cursor-not-allowed disabled:opacity-50';
 const OK = 'border-white/10 focus:border-gold-500/70 focus:ring-gold-500/15';
 const BAD = 'border-red-500/60 focus:border-red-500 focus:ring-red-500/15';
 

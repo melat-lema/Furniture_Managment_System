@@ -279,6 +279,37 @@ export class StockService {
     };
   }
 
+  // ---------------------------------------------------------------- low stock
+  /** What is running low (or out), for the dashboards. Owner and workshop manager see every location. */
+  async lowStock(user: AuthUser) {
+    const threshold = await this.lowStockThreshold();
+    const where: Prisma.StockLevelWhereInput = {
+      quantity: { lte: threshold },
+      product: { isActive: true },
+      location: { isActive: true },
+      ...(canViewAllLocations(user.role) ? {} : { locationId: user.locationId ?? '__none__' }),
+    };
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.stockLevel.findMany({
+        where,
+        include: {
+          product: { select: PRODUCT_CARD },
+          location: { select: { id: true, name: true, type: true } },
+        },
+        orderBy: [{ quantity: 'asc' }, { product: { name: 'asc' } }],
+        take: 8,
+      }),
+      this.prisma.stockLevel.count({ where }),
+    ]);
+
+    return {
+      lowStockThreshold: threshold,
+      total,
+      items: rows.map((row) => ({ product: this.card(row.product), location: row.location, quantity: row.quantity })),
+    };
+  }
+
   // --------------------------------------------------------------- helpers
   /** Only the owner and the workshop manager may look at other locations; everyone else is limited to their own. */
   private scopeLocation(user: AuthUser, requested?: string): string {

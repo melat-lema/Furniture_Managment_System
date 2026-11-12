@@ -29,7 +29,7 @@ type Pending =
   | null;
 
 const CONTROL =
-  'rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-zinc-200 outline-none transition focus:border-gold-500/70 focus:ring-4 focus:ring-gold-500/15 [&>option]:bg-ink-900';
+  'rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-base sm:text-sm text-zinc-200 outline-none transition focus:border-gold-500/70 focus:ring-4 focus:ring-gold-500/15 [&>option]:bg-ink-900';
 
 function isLocked(user: UserRecord): boolean {
   return user.lockedUntil !== null && new Date(user.lockedUntil) > new Date();

@@ -8,14 +8,15 @@ import PageHeader from '../components/ui/PageHeader';
 import Pagination from '../components/ui/Pagination';
 import QueryError from '../components/ui/QueryError';
 import { useAuth } from '../features/auth/useAuth';
+import StatusLegend from '../features/transfers/StatusLegend';
 import TransferStatusBadge, { TRANSFER_STATUS_LABEL } from '../features/transfers/TransferStatusBadge';
 import { useTransfers, type TransferFilters } from '../features/transfers/useTransfers';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { formatDateTime } from '../lib/format';
-import type { TransferStatus } from '../types/api';
+import type { TransferListRow, TransferStatus } from '../types/api';
 
 const CONTROL =
-  'rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-zinc-200 outline-none transition focus:border-gold-500/70 focus:ring-4 focus:ring-gold-500/15 [&>option]:bg-ink-900';
+  'rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-base sm:text-sm text-zinc-200 outline-none transition focus:border-gold-500/70 focus:ring-4 focus:ring-gold-500/15 [&>option]:bg-ink-900';
 
 const STATUSES = Object.keys(TRANSFER_STATUS_LABEL) as TransferStatus[];
 
@@ -46,6 +47,12 @@ export default function TransfersPage() {
   });
   const filtered = status !== '' || direction !== '' || search !== '';
 
+  /** An incoming transfer that this person has to confirm */
+  const needsMe = (transfer: TransferListRow): boolean =>
+    transfer.status === 'IN_TRANSIT' &&
+    transfer.toLocation.id === user?.locationId &&
+    (user?.role === 'STORE_MANAGER' || user?.role === 'SHOWROOM');
+
   return (
     <div className="space-y-6 animate-fade-up">
       <PageHeader
@@ -59,6 +66,8 @@ export default function TransfersPage() {
           )
         }
       />
+
+      {user && <StatusLegend role={user.role} />}
 
       <div className="flex flex-col gap-3 lg:flex-row">
         <div className="relative flex-1">
@@ -139,7 +148,39 @@ export default function TransfersPage() {
         />
       ) : data ? (
         <div className={isFetching ? 'opacity-70 transition' : 'transition'}>
-          <div className="overflow-x-auto rounded-2xl border border-white/10 bg-ink-900">
+          {/* Phones: one card per transfer */}
+          <ul className="space-y-3 sm:hidden">
+            {data.items.map((transfer) => (
+              <li key={transfer.id}>
+                <Link
+                  to={`/transfers/${transfer.id}`}
+                  className="block rounded-2xl border border-white/10 bg-ink-900 p-4 transition active:bg-white/[0.04]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="font-semibold text-gold-300">{transfer.code}</span>
+                    <TransferStatusBadge status={transfer.status} />
+                  </div>
+                  <p className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-zinc-300">
+                    {transfer.fromLocation.name}
+                    <ArrowRight className="h-3.5 w-3.5 text-zinc-600" aria-hidden="true" />
+                    {transfer.toLocation.name}
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {transfer.unitsSent} item{transfer.unitsSent === 1 ? '' : 's'} · {transfer.lines} product
+                    {transfer.lines === 1 ? '' : 's'} · {formatDateTime(transfer.receivedAt ?? transfer.sentAt ?? transfer.createdAt)}
+                  </p>
+                  {needsMe(transfer) && (
+                    <div className="mt-3">
+                      <Badge tone="gold">Needs your confirmation</Badge>
+                    </div>
+                  )}
+                </Link>
+              </li>
+            ))}
+          </ul>
+
+          {/* Tablets and computers: the table */}
+          <div className="hidden overflow-x-auto rounded-2xl border border-white/10 bg-ink-900 sm:block">
             <table className="w-full min-w-[44rem] text-left text-sm">
               <thead className="border-b border-white/10 text-xs uppercase tracking-wider text-zinc-500">
                 <tr>
@@ -153,10 +194,6 @@ export default function TransfersPage() {
               </thead>
               <tbody className="divide-y divide-white/5">
                 {data.items.map((transfer) => {
-                  const needsMe =
-                    transfer.status === 'IN_TRANSIT' &&
-                    transfer.toLocation.id === user?.locationId &&
-                    (user?.role === 'STORE_MANAGER' || user?.role === 'SHOWROOM');
                   return (
                     <tr key={transfer.id} className="transition hover:bg-white/[0.03]">
                       <td className="px-5 py-4">
@@ -177,7 +214,7 @@ export default function TransfersPage() {
                       <td className="px-5 py-4">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <TransferStatusBadge status={transfer.status} />
-                          {needsMe && <Badge tone="gold">Needs your confirmation</Badge>}
+                          {needsMe(transfer) && <Badge tone="gold">Needs your confirmation</Badge>}
                         </div>
                       </td>
                       <td className="whitespace-nowrap px-5 py-4 text-zinc-500">

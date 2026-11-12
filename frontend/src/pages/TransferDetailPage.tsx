@@ -12,6 +12,7 @@ import TransferStatusBadge from '../features/transfers/TransferStatusBadge';
 import { useSendTransfer, useTransfer } from '../features/transfers/useTransfers';
 import { cn } from '../lib/cn';
 import { formatDateTime } from '../lib/format';
+import type { TransferDetail } from '../types/api';
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -20,6 +21,42 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
       <div className="mt-1.5 text-sm text-zinc-200">{children}</div>
     </div>
   );
+}
+
+
+/** One plain sentence about where this transfer is and who has to act next. */
+function whatNext(transfer: TransferDetail): { title: string; text: string; tone: 'info' | 'warning' } | null {
+  const sender = transfer.createdBy.fullName;
+  switch (transfer.status) {
+    case 'DRAFT':
+      return transfer.can.send
+        ? {
+            title: 'This is a draft: it has not been sent yet',
+            text: `No stock has moved. Check the products and quantities, then press Send when the goods leave ${transfer.fromLocation.name}. You can still edit or cancel it.`,
+            tone: 'info',
+          }
+        : {
+            title: 'Draft: not sent yet',
+            text: `${sender} saved this transfer but has not sent it. No stock has moved. It becomes "In transit" when ${sender} presses Send.`,
+            tone: 'info',
+          };
+    case 'IN_TRANSIT':
+      return transfer.can.receive
+        ? null
+        : {
+            title: 'On the road',
+            text: `The goods have left ${transfer.fromLocation.name}. ${transfer.toLocation.name} must confirm what arrived before it is added to their stock.`,
+            tone: 'info',
+          };
+    case 'CANCELLED':
+      return {
+        title: 'Cancelled',
+        text: 'This transfer was stopped. If the goods had already left, they were put back into the sender stock.',
+        tone: 'warning',
+      };
+    default:
+      return null;
+  }
 }
 
 export default function TransferDetailPage() {
@@ -102,6 +139,11 @@ export default function TransferDetailPage() {
         </div>
       </div>
 
+      {(() => {
+        const next = whatNext(transfer);
+        return next ? <FormAlert tone={next.tone} title={next.title} message={next.text} /> : null;
+      })()}
+
       {transfer.status === 'IN_TRANSIT' && transfer.can.receive && (
         <FormAlert
           tone="warning"
@@ -132,7 +174,18 @@ export default function TransferDetailPage() {
           {formatDateTime(transfer.createdAt)}
           <span className="block text-xs text-zinc-500">by {transfer.createdBy.fullName}</span>
         </Fact>
-        <Fact label="Sent">{transfer.sentAt ? formatDateTime(transfer.sentAt) : <span className="text-zinc-500">Not sent yet</span>}</Fact>
+        <Fact label="Sent">
+          {transfer.sentAt ? (
+            formatDateTime(transfer.sentAt)
+          ) : (
+            <>
+              <span className="text-zinc-500">{transfer.status === 'CANCELLED' ? 'Never sent' : 'Not sent yet'}</span>
+              {transfer.status === 'DRAFT' && (
+                <span className="block text-xs text-zinc-500">{transfer.can.send ? 'Press Send to move the goods' : 'Waiting for the sender'}</span>
+              )}
+            </>
+          )}
+        </Fact>
         <Fact label="Received">
           {transfer.receivedAt ? (
             <>

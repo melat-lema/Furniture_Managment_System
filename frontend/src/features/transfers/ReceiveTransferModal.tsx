@@ -105,34 +105,25 @@ function ReceiveForm({ transfer, onClose }: { transfer: TransferDetail; onClose:
     <form onSubmit={onSubmit} noValidate className="space-y-5">
       {failure && <FormAlert title={failure.title} message={failure.message} tone={failure.tone} />}
 
-      <div className="overflow-hidden rounded-xl border border-white/10">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-white/5 text-xs uppercase tracking-wider text-zinc-500">
-            <tr>
-              <th scope="col" className="px-4 py-3 font-semibold">Product</th>
-              <th scope="col" className="px-4 py-3 text-center font-semibold">Sent</th>
-              <th scope="col" className="w-36 px-4 py-3 font-semibold">Received</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-white/5">
-            {fields.map((field, index) => (
-              <tr key={field.id}>
-                <td className="px-4 py-3 text-zinc-200">{field.name}</td>
-                <td className="px-4 py-3 text-center text-zinc-400">{field.sent}</td>
-                <td className="px-4 py-3">
-                  <TextField
-                    label=""
-                    aria-label={`Received quantity for ${field.name}`}
-                    inputMode="numeric"
-                    error={errors.items?.[index]?.received?.message}
-                    {...register(`items.${index}.received`)}
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ul className="divide-y divide-white/5 overflow-hidden rounded-xl border border-white/10">
+        {fields.map((field, index) => (
+          <li key={field.id} className="flex items-start gap-3 px-4 py-3">
+            <div className="min-w-0 flex-1 pt-2">
+              <p className="text-sm text-zinc-200">{field.name}</p>
+              <p className="text-xs text-zinc-500">Sent: {field.sent}</p>
+            </div>
+            <div className="w-28 shrink-0">
+              <TextField
+                label=""
+                aria-label={`Received quantity for ${field.name}`}
+                inputMode="numeric"
+                error={errors.items?.[index]?.received?.message}
+                {...register(`items.${index}.received`)}
+              />
+            </div>
+          </li>
+        ))}
+      </ul>
 
       {differences > 0 && (
         <FormAlert

@@ -2,9 +2,11 @@ import { ArrowRightLeft, Hammer, Package, ReceiptText, ShoppingBag, Warehouse, t
 import { Link } from 'react-router-dom';
 import ConnectionStatus from '../components/ConnectionStatus';
 import { useAuth } from '../features/auth/useAuth';
+import AttentionLists from '../features/dashboard/AttentionLists';
 import PriceChangesCard from '../features/products/PriceChangesCard';
 import TransferSummaryCards from '../features/transfers/TransferSummaryCards';
 import RecentActivityCard from '../features/stock/RecentActivityCard';
+import LowStockCard from '../features/stock/LowStockCard';
 import StockSummaryCards from '../features/stock/StockSummaryCards';
 import { ROLE_LABELS, type Role } from '../types/auth';
 
@@ -95,6 +97,10 @@ export default function DashboardPage() {
       </section>
 
       <TransferSummaryCards role={user.role} />
+
+      <AttentionLists role={user.role} />
+
+      <LowStockCard />
 
       {user.role === 'OWNER' && (
         <div className="grid gap-6 xl:grid-cols-2">

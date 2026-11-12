@@ -36,7 +36,7 @@ const AuthField = forwardRef<HTMLInputElement, AuthFieldProps>(function AuthFiel
           ref={ref}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? errorId : undefined}
-          className="w-full bg-transparent py-3.5 text-[15px] text-zinc-100 outline-none placeholder:text-zinc-600"
+          className="w-full bg-transparent py-3.5 text-base sm:text-[15px] text-zinc-100 outline-none placeholder:text-zinc-600"
           {...inputProps}
         />
         {rightSlot}

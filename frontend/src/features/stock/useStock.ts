@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type {
+  LowStockPage,
   MovementReason,
   MovementRow,
   Paginated,
@@ -14,6 +15,14 @@ export function useStockSummary() {
   return useQuery({
     queryKey: ['stock', 'summary'],
     queryFn: async () => (await api.get<StockSummary>('/stock/summary')).data,
+    meta: { silent: true },
+  });
+}
+
+export function useLowStock() {
+  return useQuery({
+    queryKey: ['stock', 'low'],
+    queryFn: async () => (await api.get<LowStockPage>('/stock/low')).data,
     meta: { silent: true },
   });
 }

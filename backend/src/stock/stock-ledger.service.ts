@@ -49,11 +49,19 @@ export class StockLedgerService {
       });
     }
 
-    // increment is done by the database itself, so two people acting at once cannot overwrite each other
-    const level = await tx.stockLevel.upsert({
+    if (!current) {
+      // First time this product is stocked here: make sure the row exists. Inserting 0 can never
+      // break the "no negative stock" rule, and if someone else created the row a moment ago
+      // this simply does nothing.
+      await tx.stockLevel.createMany({ data: [{ ...key, quantity: 0 }], skipDuplicates: true });
+    }
+
+    // The database itself does the adding or subtracting, so two people acting at once cannot overwrite each other.
+    // (An "upsert" is NOT used here: PostgreSQL checks the rule on the row it would INSERT, which is
+    // negative when removing stock, and refuses it even though the existing row would be updated.)
+    const level = await tx.stockLevel.update({
       where: { productId_locationId: key },
-      create: { ...key, quantity: input.qtyChange },
-      update: { quantity: { increment: input.qtyChange } },
+      data: { quantity: { increment: input.qtyChange } },
       select: { quantity: true },
     });
 

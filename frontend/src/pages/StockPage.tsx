@@ -20,7 +20,7 @@ import { REASON_LABEL } from '../lib/stock-labels';
 import type { MovementReason, StockLevelRow, StockProduct } from '../types/api';
 
 const CONTROL =
-  'rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-zinc-200 outline-none transition focus:border-gold-500/70 focus:ring-4 focus:ring-gold-500/15 [&>option]:bg-ink-900';
+  'rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-base sm:text-sm text-zinc-200 outline-none transition focus:border-gold-500/70 focus:ring-4 focus:ring-gold-500/15 [&>option]:bg-ink-900';
 
 
 type Tab = 'overview' | 'location' | 'history';
@@ -209,7 +209,41 @@ function LocationView() {
         />
       ) : data ? (
         <div className={isFetching ? 'opacity-70 transition' : 'transition'}>
-          <div className="overflow-x-auto rounded-2xl border border-white/10 bg-ink-900">
+          {/* Phones: one card per product */}
+          <ul className="space-y-3 sm:hidden">
+            {data.items.map((row) => (
+              <li key={row.product.id} className="rounded-2xl border border-white/10 bg-ink-900 p-4">
+                <div className="flex items-center gap-3">
+                  <Thumb product={row.product} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-zinc-100">{row.product.name}</p>
+                    <p className="truncate text-xs text-zinc-500">
+                      {row.product.sku} · {row.product.category.name}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <QuantityBadge quantity={row.quantity} threshold={data.lowStockThreshold} />
+                    <p className="mt-0.5 text-xs text-zinc-500">{formatMoney(row.product.price)}</p>
+                  </div>
+                </div>
+                {canAdjust && (
+                  <div className="mt-3 border-t border-white/5 pt-3">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Pencil className="h-3.5 w-3.5" aria-hidden="true" />}
+                      onClick={() => setAdjusting(row)}
+                    >
+                      Adjust
+                    </Button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+
+          {/* Tablets and computers: the table */}
+          <div className="hidden overflow-x-auto rounded-2xl border border-white/10 bg-ink-900 sm:block">
             <table className="w-full min-w-[40rem] text-left text-sm">
               <thead className="border-b border-white/10 text-xs uppercase tracking-wider text-zinc-500">
                 <tr>

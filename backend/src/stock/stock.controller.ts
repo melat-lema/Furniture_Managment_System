@@ -47,6 +47,12 @@ export class StockController {
     return this.stock.movements(query, user);
   }
 
+  /** GET /api/stock/low  (what is running low or out, for the dashboards) */
+  @Get('low')
+  low(@CurrentUser() user: AuthUser) {
+    return this.stock.lowStock(user);
+  }
+
   /** GET /api/stock/summary  (dashboard numbers) */
   @Get('summary')
   summary(@CurrentUser() user: AuthUser) {

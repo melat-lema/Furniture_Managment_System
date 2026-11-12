@@ -326,6 +326,19 @@ async function run(): Promise<void> {
   const onlyOwn = (showroomList.body?.items ?? []).every((row: { fromLocation: { id: string }; toLocation: { id: string } }) => row.fromLocation.id === showroom.id || row.toLocation.id === showroom.id);
   record('The showroom only sees transfers that involve it', onlyOwn, 'it saw someone else\'s transfer');
 
+  // ---- low-stock list (dashboards)
+  for (const role of ROLES) {
+    expectStatus(`${role}: can read the low-stock list`, await call(accounts[role], 'GET', '/stock/low'), 200);
+  }
+  for (const [who, locationId, label] of [
+    [storeMgr, store.id, 'store'],
+    [showroomAcc, showroom.id, 'showroom'],
+  ] as const) {
+    const low = await call(who, 'GET', '/stock/low');
+    const ownOnly = (low.body?.items ?? []).every((row: { location: { id: string } }) => row.location.id === locationId);
+    record(`The ${label} low-stock list only shows its own location`, ownOnly, 'it listed another location');
+  }
+
   // ---- ledger integrity: running total must equal the sum of the ledger
   const sum = await prisma.stockMovement.aggregate({ where: { productId: pW, locationId: workshop.id }, _sum: { qtyChange: true } });
   const level = await prisma.stockLevel.findUnique({ where: { productId_locationId: { productId: pW, locationId: workshop.id } } });

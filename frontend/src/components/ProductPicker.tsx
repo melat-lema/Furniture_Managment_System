@@ -179,7 +179,7 @@ export default function ProductPicker({
               }}
               onFocus={() => setOpen(true)}
               onKeyDown={onKeyDown}
-              className="w-full bg-transparent py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
+              className="w-full bg-transparent py-3 text-base sm:text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
             />
             {isFetching && open && <LoaderCircle className="h-4 w-4 animate-spin text-zinc-500" aria-hidden="true" />}
           </div>

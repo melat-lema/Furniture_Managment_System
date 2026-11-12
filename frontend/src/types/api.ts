@@ -176,3 +176,16 @@ export interface TransferSummary {
   outgoingDrafts: number;
   recentDiscrepancies: number;
 }
+
+// ------------------------------------------------------------------ Week 2 finish: low stock
+export interface LowStockRow {
+  product: StockProduct;
+  location: LocationSummary;
+  quantity: number;
+}
+
+export interface LowStockPage {
+  lowStockThreshold: number;
+  total: number;
+  items: LowStockRow[];
+}
