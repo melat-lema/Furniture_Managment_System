@@ -21,3 +21,18 @@ export function detectImageType(buffer: Buffer): DetectedImage | null {
   }
   return null;
 }
+
+export interface DetectedReceipt {
+  mime: 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
+  ext: 'jpg' | 'png' | 'webp' | 'pdf';
+}
+
+/** Receipts may be a photo or a PDF. Like detectImageType, this reads the real file contents. */
+export function detectReceiptType(buffer: Buffer): DetectedReceipt | null {
+  const image = detectImageType(buffer);
+  if (image) return image;
+  if (buffer.length > 8 && buffer.toString('ascii', 0, 5) === '%PDF-') {
+    return { mime: 'application/pdf', ext: 'pdf' };
+  }
+  return null;
+}

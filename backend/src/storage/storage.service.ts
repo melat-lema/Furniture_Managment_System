@@ -3,18 +3,20 @@ import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { ErrorCode } from '../common/constants';
-import type { DetectedImage } from './image-type';
+import type { DetectedImage, DetectedReceipt } from './image-type';
 
 @Injectable()
 export class StorageService {
   private readonly logger = new Logger(StorageService.name);
   private readonly bucket: string;
+  private readonly receiptBucket: string;
   private readonly client: SupabaseClient | null;
 
   constructor(config: ConfigService) {
     const url = config.get<string>('SUPABASE_URL')?.trim();
     const key = config.get<string>('SUPABASE_SECRET_KEY')?.trim();
     this.bucket = config.get<string>('SUPABASE_PRODUCT_BUCKET')?.trim() || 'product-images';
+    this.receiptBucket = config.get<string>('SUPABASE_RECEIPT_BUCKET')?.trim() || 'receipts';
     this.client =
       url && key ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 
@@ -57,6 +59,51 @@ export class StorageService {
     } catch (error) {
       this.logger.warn(`Could not delete ${path}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+
+  // ---------------------------------------------------------------- receipts (private)
+  /** Receipts live in a PRIVATE bucket: nobody can open them without a short-lived signed link. */
+  async uploadReceipt(saleId: string, buffer: Buffer, type: DetectedReceipt): Promise<string> {
+    const client = this.requireClient();
+    const path = `sales/${saleId}/${randomUUID()}.${type.ext}`;
+
+    const { error } = await client.storage.from(this.receiptBucket).upload(path, buffer, {
+      contentType: type.mime,
+      upsert: false,
+    });
+    if (error) {
+      this.logger.error(`Receipt upload failed: ${error.message}`);
+      throw new HttpException(
+        { code: ErrorCode.STORAGE_ERROR, message: 'We could not save the receipt right now. Please try again.' },
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+    return path;
+  }
+
+  async deleteReceipt(path: string): Promise<void> {
+    if (!this.client) return;
+    try {
+      const { error } = await this.client.storage.from(this.receiptBucket).remove([path]);
+      if (error) this.logger.warn(`Could not delete ${path}: ${error.message}`);
+    } catch (error) {
+      this.logger.warn(`Could not delete ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** A link that works for a few minutes only. */
+  async signedReceiptUrl(path: string, seconds = 300): Promise<string> {
+    const client = this.requireClient();
+    const { data, error } = await client.storage.from(this.receiptBucket).createSignedUrl(path, seconds);
+    if (error || !data) {
+      this.logger.error(`Could not sign receipt link: ${error?.message ?? 'no data'}`);
+      throw new HttpException(
+        { code: ErrorCode.STORAGE_ERROR, message: 'We could not open the receipt right now. Please try again.' },
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+    return data.signedUrl;
   }
 
   private requireClient(): SupabaseClient {

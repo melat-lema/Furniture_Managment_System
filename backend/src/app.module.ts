@@ -13,6 +13,9 @@ import { HealthController } from './health.controller';
 import { LocationsModule } from './locations/locations.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
+import { SalesModule } from './sales/sales.module';
+import { SalespeopleModule } from './salespeople/salespeople.module';
+import { SettingsModule } from './settings/settings.module';
 import { StockModule } from './stock/stock.module';
 import { TransfersModule } from './transfers/transfers.module';
 import { UsersModule } from './users/users.module';
@@ -32,6 +35,9 @@ import { UsersModule } from './users/users.module';
     ProductsModule,
     StockModule,
     TransfersModule,
+    SettingsModule,
+    SalespeopleModule,
+    SalesModule,
   ],
   controllers: [HealthController],
   providers: [
