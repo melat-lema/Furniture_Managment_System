@@ -48,6 +48,16 @@ export const ErrorCode = {
 
   // Day 7 and 8
   TRANSFER_STATE: 'TRANSFER_STATE',
+
+  // Week 3: sales and payments
+  DISCOUNT_LIMIT: 'DISCOUNT_LIMIT',
+  OVERPAYMENT: 'OVERPAYMENT',
+  SALE_CLOSED: 'SALE_CLOSED',
+  RECEIPT_REQUIRED: 'RECEIPT_REQUIRED',
 } as const;
+
+/** Ethiopia is UTC+3 all year (no daylight saving). "Today" and "this month" use this. */
+export const BUSINESS_UTC_OFFSET_HOURS = 3;
+export const MAX_RECEIPT_BYTES = 5 * 1024 * 1024; // 5 MB
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB

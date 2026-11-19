@@ -17,3 +17,6 @@ export function canManageProducts(role: Role): boolean {
 export function canViewAllLocations(role: Role): boolean {
   return STOCK_VIEWERS.includes(role);
 }
+
+/** Who may see sales and payments: the owner (oversight) and the showroom that made the sale. */
+export const SALES_ROLES: Role[] = ['OWNER', 'SHOWROOM'];

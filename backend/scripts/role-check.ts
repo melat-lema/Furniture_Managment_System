@@ -63,6 +63,36 @@ async function call(who: Account | null, method: string, path: string, body?: un
   return { status: response.status, body: json };
 }
 
+/** A multipart request (used for payments, which can carry a receipt file). */
+async function callForm(
+  who: Account,
+  path: string,
+  fields: Record<string, string>,
+  file?: { name: string; type: string; bytes: Uint8Array },
+): Promise<ApiResponse> {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) form.append(key, value);
+  if (file) form.append('receipt', new Blob([file.bytes], { type: file.type }), file.name);
+
+  const response = await fetch(`${API}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${who.token}` }, body: form });
+  const text = await response.text();
+  let json: unknown = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  return { status: response.status, body: json };
+}
+
+/** A real 1x1 PNG, used to test receipt uploads. */
+const TINY_PNG = Uint8Array.from(
+  Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'),
+);
+
+/** The discount limit before this test changed it, so it can be put back. */
+let discountToRestore: number | null = null;
+
 function record(name: string, ok: boolean, detail = ''): void {
   results.push({ name, ok, detail });
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${ok || !detail ? '' : `   -> ${detail}`}`);
@@ -125,6 +155,10 @@ async function setup() {
 }
 
 async function cleanup(): Promise<void> {
+  await prisma.payment.deleteMany({ where: { sale: { location: { name: { startsWith: tag } } } } });
+  await prisma.saleItem.deleteMany({ where: { sale: { location: { name: { startsWith: tag } } } } });
+  await prisma.sale.deleteMany({ where: { location: { name: { startsWith: tag } } } });
+  await prisma.salesperson.deleteMany({ where: { showroom: { name: { startsWith: tag } } } });
   await prisma.transfer.deleteMany({
     where: { OR: [{ fromLocation: { name: { startsWith: tag } } }, { toLocation: { name: { startsWith: tag } } }] },
   });
@@ -346,6 +380,106 @@ async function run(): Promise<void> {
   const storeSum = await prisma.stockMovement.aggregate({ where: { productId: pW, locationId: store.id }, _sum: { qtyChange: true } });
   const storeLevel = await prisma.stockLevel.findUnique({ where: { productId_locationId: { productId: pW, locationId: store.id } } });
   record('Ledger total equals the stock level (store)', storeSum._sum.qtyChange === storeLevel?.quantity, `ledger ${storeSum._sum.qtyChange} vs level ${storeLevel?.quantity}`);
+  const showroomSum = await prisma.stockMovement.aggregate({ where: { productId: pW, locationId: showroom.id }, _sum: { qtyChange: true } });
+  const showroomLevel = await prisma.stockLevel.findUnique({ where: { productId_locationId: { productId: pW, locationId: showroom.id } } });
+  record('Ledger total equals the stock level (showroom, after the sale)', showroomSum._sum.qtyChange === showroomLevel?.quantity, `ledger ${showroomSum._sum.qtyChange} vs level ${showroomLevel?.quantity}`);
+
+  // ---- settings (owner only)
+  for (const role of ROLES) {
+    const expected = role === 'OWNER' ? 200 : 403;
+    expectStatus(`${role}: settings ${expected === 200 ? 'allowed' : 'refused'}`, await call(accounts[role], 'GET', '/settings'), expected);
+  }
+  const settingsNow = await call(owner, 'GET', '/settings');
+  const currentDiscount = (settingsNow.body ?? []).find((row: { key: string }) => row.key === 'max_discount_percent')?.value;
+  discountToRestore = typeof currentDiscount === 'number' ? currentDiscount : 100;
+  expectStatus('A setting outside its range is rejected', await call(owner, 'PATCH', '/settings', { max_discount_percent: 150 }), 400, 'VALIDATION_ERROR');
+  expectStatus('OWNER: can set the discount limit (10% for this test)', await call(owner, 'PATCH', '/settings', { max_discount_percent: 10 }), 200);
+  expectStatus('SHOWROOM: cannot change settings', await call(showroomAcc, 'PATCH', '/settings', { max_discount_percent: 100 }), 403, 'FORBIDDEN_ROLE');
+
+  // ---- salespeople
+  const anna = await call(showroomAcc, 'POST', '/salespeople', { fullName: `${tag} Anna`, phone: '+251 911 000111' });
+  expectStatus('SHOWROOM: can add a salesperson', anna, 201);
+  expectStatus('A duplicate salesperson name is rejected', await call(showroomAcc, 'POST', '/salespeople', { fullName: `${tag} anna` }), 409, 'UNIQUE_CONSTRAINT');
+  const ben = await call(showroomAcc, 'POST', '/salespeople', { fullName: `${tag} Ben` });
+  expectStatus('SHOWROOM: can add a second salesperson', ben, 201);
+  for (const who of [workshopMgr, storeMgr]) {
+    expectStatus(`${who.role}: cannot read salespeople`, await call(who, 'GET', '/salespeople'), 403, 'FORBIDDEN_ROLE');
+    expectStatus(`${who.role}: cannot add a salesperson`, await call(who, 'POST', '/salespeople', { fullName: `${tag} Nope` }), 403, 'FORBIDDEN_ROLE');
+  }
+  expectStatus('OWNER must say which showroom when adding a salesperson', await call(owner, 'POST', '/salespeople', { fullName: `${tag} Owner pick` }), 400, 'VALIDATION_ERROR');
+  const ownerList = await call(owner, 'GET', `/salespeople?showroomId=${showroom.id}`);
+  record('OWNER: sees the showroom list', (ownerList.body ?? []).some((row: { id: string }) => row.id === anna.body?.id), 'Anna was not listed');
+  expectStatus('SHOWROOM: can deactivate a salesperson', await call(showroomAcc, 'PATCH', `/salespeople/${ben.body?.id}`, { isActive: false }), 200);
+  const activeOnly = await call(showroomAcc, 'GET', '/salespeople');
+  record('The "Sold by" list only has active people', (activeOnly.body ?? []).every((row: { isActive: boolean }) => row.isActive), 'an inactive person was listed');
+
+  // ---- sales
+  const sale = (extra: Record<string, unknown> = {}, quantity = 1) => ({
+    salespersonId: anna.body?.id,
+    items: [{ productId: pW, quantity }],
+    ...extra,
+  });
+  for (const who of [workshopMgr, storeMgr, owner]) {
+    expectStatus(`${who.role}: cannot record a sale`, await call(who, 'POST', '/sales', sale()), 403, 'FORBIDDEN_ROLE');
+  }
+  expectStatus('Cannot sell as an inactive salesperson', await call(showroomAcc, 'POST', '/sales', sale({ salespersonId: ben.body?.id })), 400, 'VALIDATION_ERROR');
+  expectStatus('Cannot sell more than the showroom has', await call(showroomAcc, 'POST', '/sales', sale({}, 99)), 409, 'INSUFFICIENT_STOCK');
+  expectStatus('The price cannot be sent from the screen', await call(showroomAcc, 'POST', '/sales', { salespersonId: anna.body?.id, items: [{ productId: pW, quantity: 1, unitPrice: 1 }] }), 400, 'VALIDATION_ERROR');
+  const noReason = await call(showroomAcc, 'POST', '/sales', sale({ discount: 100 }));
+  expectStatus('A discount needs a reason', noReason, 400, 'VALIDATION_ERROR');
+  record('...and the error points at the reason', noReason.body?.errors?.[0]?.field === 'discountReason', JSON.stringify(noReason.body?.errors));
+  expectStatus('A discount cannot be the whole price', await call(showroomAcc, 'POST', '/sales', sale({ discount: 5000, discountReason: 'test' })), 400, 'VALIDATION_ERROR');
+  expectStatus('A discount above the limit is refused (20% > 10%)', await call(showroomAcc, 'POST', '/sales', sale({ discount: 500, discountReason: 'too big' })), 409, 'DISCOUNT_LIMIT');
+
+  const made = await call(showroomAcc, 'POST', '/sales', sale({ customerName: 'Test Customer', customerPhone: '+251 911 222333', discount: 100, discountReason: 'regular customer' }));
+  expectStatus('SHOWROOM: can record a sale with a small discount', made, 201);
+  const saleId: string = made.body?.id;
+  record('...the total is price minus discount (2500 - 100 = 2400)', Number(made.body?.total) === 2400, `got ${made.body?.total}`);
+  record('...it starts as unpaid', made.body?.paymentStatus === 'PENDING', `got ${made.body?.paymentStatus}`);
+  const afterSale = await levelOf(showroomAcc, showroom.id);
+  record('...the showroom stock went down by 1 (3 to 2)', afterSale === 2, `got ${afterSale}`);
+
+  expectStatus('SHOWROOM: can open its sale', await call(showroomAcc, 'GET', `/sales/${saleId}`), 200);
+  expectStatus('OWNER: can open any sale', await call(owner, 'GET', `/sales/${saleId}`), 200);
+  expectStatus('STORE_MANAGER: cannot open a sale', await call(storeMgr, 'GET', `/sales/${saleId}`), 403, 'FORBIDDEN_ROLE');
+  expectStatus('WORKSHOP_MANAGER: cannot read sales', await call(workshopMgr, 'GET', '/sales'), 403, 'FORBIDDEN_ROLE');
+  const showroomSales = await call(showroomAcc, 'GET', '/sales');
+  record('The showroom list only has its own sales', (showroomSales.body?.items ?? []).every((row: { location: { id: string } }) => row.location.id === showroom.id), 'it listed another showroom');
+  expectStatus('OWNER: can read the sales list', await call(owner, 'GET', '/sales'), 200);
+  expectStatus('SHOWROOM: can read the sales summary', await call(showroomAcc, 'GET', '/sales/summary'), 200);
+  expectStatus('OWNER: can read the sales summary', await call(owner, 'GET', '/sales/summary'), 200);
+  expectStatus('STORE_MANAGER: cannot read the sales summary', await call(storeMgr, 'GET', '/sales/summary'), 403, 'FORBIDDEN_ROLE');
+
+  // ---- payments
+  const pay = (fields: Record<string, string>, file?: { name: string; type: string; bytes: Uint8Array }) =>
+    callForm(showroomAcc, `/sales/${saleId}/payments`, fields, file);
+  expectStatus('OWNER: cannot record a payment', await callForm(owner, `/sales/${saleId}/payments`, { amount: '100', method: 'CASH' }), 403, 'FORBIDDEN_ROLE');
+  expectStatus('A payment cannot be more than the balance', await pay({ amount: '5000', method: 'CASH' }), 409, 'OVERPAYMENT');
+  expectStatus('A bank payment needs a reference number', await pay({ amount: '500', method: 'BANK_TRANSFER' }), 400, 'VALIDATION_ERROR');
+  expectStatus('A bank payment needs a receipt', await pay({ amount: '500', method: 'TELEBIRR', referenceNo: 'TB123' }), 409, 'RECEIPT_REQUIRED');
+  expectStatus('A receipt that is not an image or PDF is rejected', await pay({ amount: '500', method: 'TELEBIRR', referenceNo: 'TB123' }, { name: 'fake.png', type: 'image/png', bytes: new TextEncoder().encode('this is not an image') }), 400, 'VALIDATION_ERROR');
+  const part = await pay({ amount: '1000', method: 'CASH' });
+  expectStatus('SHOWROOM: can record a cash payment (no receipt needed)', part, 201);
+  record('...the sale is now partly paid', part.body?.paymentStatus === 'PARTIAL', `got ${part.body?.paymentStatus}`);
+  record('...the payment waits for the owner', part.body?.payments?.[0]?.verificationStatus === 'UNVERIFIED', `got ${part.body?.payments?.[0]?.verificationStatus}`);
+  const rest = await pay({ amount: '1400', method: 'CASH' });
+  expectStatus('SHOWROOM: can pay the rest', rest, 201);
+  record('...the sale is now paid', rest.body?.paymentStatus === 'PAID', `got ${rest.body?.paymentStatus}`);
+  expectStatus('A fully paid sale takes no more payments', await pay({ amount: '100', method: 'CASH' }), 409, 'OVERPAYMENT');
+
+  if (process.env.ROLE_CHECK_UPLOADS === '1') {
+    // This really uploads a tiny file to your private receipts bucket (it stays there). Run only when you want to test storage.
+    const second = await call(showroomAcc, 'POST', '/sales', sale());
+    const secondPay = await callForm(showroomAcc, `/sales/${second.body?.id}/payments`, { amount: '1000', method: 'TELEBIRR', referenceNo: 'RC-TEST' }, { name: 'receipt.png', type: 'image/png', bytes: TINY_PNG });
+    expectStatus('A bank payment with a receipt is accepted (needs Supabase storage)', secondPay, 201);
+    const paymentId: string | undefined = secondPay.body?.payments?.[0]?.id;
+    record('...the receipt is stored', secondPay.body?.payments?.[0]?.hasReceipt === true, 'hasReceipt was false');
+    expectStatus('SHOWROOM: gets a link to its receipt', await call(showroomAcc, 'GET', `/payments/${paymentId}/receipt`), 200);
+    expectStatus('OWNER: gets a link to the receipt', await call(owner, 'GET', `/payments/${paymentId}/receipt`), 200);
+    expectStatus('STORE_MANAGER: cannot open a receipt', await call(storeMgr, 'GET', `/payments/${paymentId}/receipt`), 403, 'FORBIDDEN_ROLE');
+  } else {
+    console.log('SKIP  receipt upload checks (run with ROLE_CHECK_UPLOADS=1 to test Supabase storage)');
+  }
 
   // ---- accounts: protection and instant sign-out
   expectStatus('OWNER cannot deactivate their own account', await call(owner, 'PATCH', `/users/${owner.id}/active`, { isActive: false }), 409, 'CANNOT_MODIFY_SELF');
@@ -360,6 +494,13 @@ async function main(): Promise<void> {
   } catch (error) {
     crashed = error;
   } finally {
+    if (discountToRestore !== null && accounts.OWNER?.token) {
+      try {
+        await call(accounts.OWNER, 'PATCH', '/settings', { max_discount_percent: discountToRestore });
+      } catch {
+        console.error('Could not restore the discount limit. Check Settings.');
+      }
+    }
     try {
       await cleanup();
       console.log('\nTemporary test data removed.');
