@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import ConnectionStatus from '../components/ConnectionStatus';
 import { useAuth } from '../features/auth/useAuth';
 import AttentionLists from '../features/dashboard/AttentionLists';
+import SalesSummaryCards from '../features/dashboard/SalesSummaryCards';
 import PriceChangesCard from '../features/products/PriceChangesCard';
 import TransferSummaryCards from '../features/transfers/TransferSummaryCards';
 import RecentActivityCard from '../features/stock/RecentActivityCard';
@@ -18,6 +19,7 @@ interface Shortcut {
 
 const SHORTCUTS: Record<Role, Shortcut[]> = {
   OWNER: [
+    { to: '/sales', label: 'Sales', icon: ShoppingBag },
     { to: '/stock', label: 'Stock', icon: Warehouse },
     { to: '/transfers', label: 'Transfers', icon: ArrowRightLeft },
     { to: '/products', label: 'Products', icon: Package },
@@ -34,6 +36,7 @@ const SHORTCUTS: Record<Role, Shortcut[]> = {
     { to: '/stock', label: 'Stock', icon: Warehouse },
   ],
   SHOWROOM: [
+    { to: '/sales/new', label: 'New sale', icon: ShoppingBag },
     { to: '/transfers', label: 'Transfers', icon: ArrowRightLeft },
     { to: '/stock', label: 'Stock', icon: Warehouse },
   ],
@@ -53,7 +56,7 @@ const PLANNED: Record<Role, PlannedCard[]> = {
   ],
   WORKSHOP_MANAGER: [],
   STORE_MANAGER: [],
-  SHOWROOM: [{ icon: ShoppingBag, title: 'New sale', text: 'Record a sale, pick the salesperson and upload the receipt.' }],
+  SHOWROOM: [],
 };
 
 function greeting(): string {
@@ -95,6 +98,8 @@ export default function DashboardPage() {
         <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-500">Stock right now</h2>
         <StockSummaryCards />
       </section>
+
+      {(user.role === 'SHOWROOM' || user.role === 'OWNER') && <SalesSummaryCards />}
 
       <TransferSummaryCards role={user.role} />
 
