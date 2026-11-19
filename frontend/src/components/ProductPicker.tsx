@@ -13,6 +13,8 @@ export interface ProductOption {
   imageUrl: string | null;
   /** only set when the picker lists stock of one location */
   available?: number;
+  /** the catalog price, as text (for example "12500.00") */
+  price?: string;
 }
 
 interface ProductPickerProps {
@@ -67,6 +69,7 @@ export default function ProductPicker({
           sku: row.product.sku,
           imageUrl: row.product.imageUrl,
           available: row.quantity,
+          price: row.product.price,
           category: row.product.category.name,
         }));
       }
@@ -78,6 +81,7 @@ export default function ProductPicker({
         name: product.name,
         sku: product.sku,
         imageUrl: product.imageUrl,
+        price: product.price,
         category: product.category.name,
       }));
     },
@@ -96,7 +100,7 @@ export default function ProductPicker({
   }, [open]);
 
   const choose = (product: ProductOption) => {
-    onChange({ id: product.id, name: product.name, sku: product.sku, imageUrl: product.imageUrl, available: product.available });
+    onChange({ id: product.id, name: product.name, sku: product.sku, imageUrl: product.imageUrl, available: product.available, price: product.price });
     setQuery('');
     setOpen(false);
   };

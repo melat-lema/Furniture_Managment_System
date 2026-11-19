@@ -72,7 +72,11 @@ async function callForm(
 ): Promise<ApiResponse> {
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) form.append(key, value);
-  if (file) form.append('receipt', new Blob([file.bytes], { type: file.type }), file.name);
+  if (file) {
+    const receiptBytes = new Uint8Array(file.bytes.byteLength);
+    receiptBytes.set(file.bytes);
+    form.append('receipt', new Blob([receiptBytes.buffer], { type: file.type }), file.name);
+  }
 
   const response = await fetch(`${API}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${who.token}` }, body: form });
   const text = await response.text();
