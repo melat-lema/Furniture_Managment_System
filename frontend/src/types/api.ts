@@ -189,3 +189,102 @@ export interface LowStockPage {
   total: number;
   items: LowStockRow[];
 }
+
+// ------------------------------------------------------------------ Week 3: salespeople, sales, payments
+export type PaymentMethod = 'CASH' | 'BANK_TRANSFER' | 'TELEBIRR' | 'CBE_BIRR' | 'OTHER';
+export type SalePaymentStatus = 'PENDING' | 'PARTIAL' | 'PAID';
+export type VerificationStatus = 'UNVERIFIED' | 'VERIFIED' | 'REJECTED';
+
+export interface SalespersonRecord {
+  id: string;
+  fullName: string;
+  phone: string | null;
+  isActive: boolean;
+  showroomId: string;
+  showroom: { id: string; name: string };
+  salesCount: number;
+  createdAt: string;
+}
+
+export interface SaleListRow {
+  id: string;
+  code: string;
+  status: 'ACTIVE' | 'VOIDED';
+  paymentStatus: SalePaymentStatus;
+  soldAt: string;
+  customerName: string | null;
+  location: { id: string; name: string };
+  salesperson: { id: string; fullName: string };
+  units: number;
+  discount: string;
+  total: string;
+  paid: string;
+  balance: string;
+}
+
+export interface PaymentView {
+  id: string;
+  amount: string;
+  method: PaymentMethod;
+  referenceNo: string | null;
+  hasReceipt: boolean;
+  verificationStatus: VerificationStatus;
+  rejectReason: string | null;
+  createdAt: string;
+  verifiedAt: string | null;
+  recordedBy: { id: string; fullName: string };
+  verifiedBy: { id: string; fullName: string } | null;
+}
+
+export interface SaleDetail {
+  id: string;
+  code: string;
+  status: 'ACTIVE' | 'VOIDED';
+  paymentStatus: SalePaymentStatus;
+  soldAt: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  subtotal: string;
+  discount: string;
+  discountReason: string | null;
+  total: string;
+  paid: string;
+  balance: string;
+  voidedAt: string | null;
+  voidReason: string | null;
+  location: { id: string; name: string };
+  salesperson: { id: string; fullName: string; isActive: boolean };
+  recordedBy: { id: string; fullName: string };
+  items: Array<{
+    productId: string;
+    product: { id: string; name: string; sku: string; imageUrl: string | null };
+    quantity: number;
+    unitPrice: string;
+    lineTotal: string;
+  }>;
+  payments: PaymentView[];
+  can: { addPayment: boolean };
+}
+
+export interface SalesSummary {
+  today: { count: number; total: string };
+  month: { count: number; total: string };
+  unpaid: { count: number; balance: string };
+}
+
+export interface SettingRecord {
+  key: 'low_stock_threshold' | 'max_discount_percent';
+  label: string;
+  description: string;
+  unit: string;
+  min: number;
+  max: number;
+  fallback: number;
+  value: number;
+}
+
+export interface ReceiptLink {
+  url: string;
+  expiresInSeconds: number;
+  kind: 'pdf' | 'image';
+}
