@@ -5,9 +5,14 @@ import CategoriesPage from './pages/CategoriesPage';
 import DashboardPage from './pages/DashboardPage';
 import LocationsPage from './pages/LocationsPage';
 import LoginPage from './pages/LoginPage';
+import NewSalePage from './pages/NewSalePage';
 import NotFoundPage from './pages/NotFoundPage';
 import ProductsPage from './pages/ProductsPage';
 import RecordProductionPage from './pages/RecordProductionPage';
+import SaleDetailPage from './pages/SaleDetailPage';
+import SalesPage from './pages/SalesPage';
+import SalespeoplePage from './pages/SalespeoplePage';
+import SettingsPage from './pages/SettingsPage';
 import StockPage from './pages/StockPage';
 import TransferDetailPage from './pages/TransferDetailPage';
 import TransferFormPage from './pages/TransferFormPage';
@@ -52,10 +57,23 @@ export default function App() {
             <Route path="production" element={<RecordProductionPage />} />
           </Route>
 
+          {/* Sales: the showroom records and sees its own, the owner sees all */}
+          <Route element={<RequireAuth roles={['OWNER', 'SHOWROOM']} />}>
+            <Route path="sales" element={<SalesPage />} />
+            <Route path="sales/:id" element={<SaleDetailPage />} />
+            <Route path="salespeople" element={<SalespeoplePage />} />
+          </Route>
+
+          {/* Only a showroom records a sale */}
+          <Route element={<RequireAuth roles={['SHOWROOM']} />}>
+            <Route path="sales/new" element={<NewSalePage />} />
+          </Route>
+
           {/* Owner only */}
           <Route element={<RequireAuth roles={['OWNER']} />}>
             <Route path="locations" element={<LocationsPage />} />
             <Route path="users" element={<UsersPage />} />
+            <Route path="settings" element={<SettingsPage />} />
           </Route>
 
           <Route path="*" element={<NotFoundPage />} />

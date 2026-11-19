@@ -1,232 +1,115 @@
-import { useQuery } from '@tanstack/react-query';
-import { Armchair, CircleAlert, LoaderCircle, Search, X } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
-import { useDebouncedValue } from '../hooks/useDebouncedValue';
-import { api } from '../lib/api';
-import { cn } from '../lib/cn';
-import type { Paginated, ProductRecord, StockLevelsPage } from '../types/api';
+import { CircleAlert, FileText, Paperclip, X } from 'lucide-react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { toast } from 'sonner';
+import { compressImage } from '../lib/image';
+import Button from './ui/Button';
 
-export interface ProductOption {
-  id: string;
-  name: string;
-  sku: string;
-  imageUrl: string | null;
-  /** only set when the picker lists stock of one location */
-  available?: number;
-  /** the catalog price, as text (for example "12500.00") */
-  price?: string;
-}
+const MAX_BYTES = 5 * 1024 * 1024;
 
-interface ProductPickerProps {
-  value: ProductOption | null;
-  onChange: (product: ProductOption | null) => void;
-  label?: string;
-  error?: string;
+interface ReceiptPickerProps {
+  value: File | null;
+  onChange: (file: File | null) => void;
+  error?: string | null;
+  required?: boolean;
   disabled?: boolean;
-  placeholder?: string;
-  /** When set, only products that are in stock at this location are listed, with how many. */
-  stockLocationId?: string;
 }
 
-function Thumb({ url }: { url: string | null }) {
-  return url ? (
-    <img src={url} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" />
-  ) : (
-    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/5 text-zinc-600">
-      <Armchair className="h-4 w-4" aria-hidden="true" />
-    </span>
-  );
-}
+/**
+ * Choose or take a photo of the receipt (or pick a PDF). Photos are shrunk before uploading,
+ * so a 6 MB phone picture becomes a few hundred KB on a slow connection.
+ */
+export default function ReceiptPicker({ value, onChange, error, required, disabled }: ReceiptPickerProps) {
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
 
-/** Type to search the catalog, then pick a product. Works with the keyboard (arrows and Enter). */
-export default function ProductPicker({
-  value,
-  onChange,
-  label,
-  error,
-  disabled,
-  placeholder = 'Search by name or code',
-  stockLocationId,
-}: ProductPickerProps) {
-  const id = useId();
-  const wrapper = useRef<HTMLDivElement>(null);
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const [highlight, setHighlight] = useState(0);
-  const debounced = useDebouncedValue(query, 250);
-
-  const { data, isFetching, isError } = useQuery({
-    queryKey: ['product-picker', stockLocationId ?? 'catalog', debounced],
-    enabled: open && !value,
-    queryFn: async (): Promise<Array<ProductOption & { category: string }>> => {
-      if (stockLocationId) {
-        const { data: page } = await api.get<StockLevelsPage>('/stock/levels', {
-          params: { locationId: stockLocationId, pageSize: 8, ...(debounced && { search: debounced }) },
-        });
-        return page.items.map((row) => ({
-          id: row.product.id,
-          name: row.product.name,
-          sku: row.product.sku,
-          imageUrl: row.product.imageUrl,
-          available: row.quantity,
-          price: row.product.price,
-          category: row.product.category.name,
-        }));
-      }
-      const { data: page } = await api.get<Paginated<ProductRecord>>('/products', {
-        params: { pageSize: 8, isActive: true, ...(debounced && { search: debounced }) },
-      });
-      return page.items.map((product) => ({
-        id: product.id,
-        name: product.name,
-        sku: product.sku,
-        imageUrl: product.imageUrl,
-        price: product.price,
-        category: product.category.name,
-      }));
-    },
-    meta: { silent: true },
-  });
-  const results = data ?? [];
-
-  // close the list when clicking elsewhere
   useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (wrapper.current && !wrapper.current.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
-  }, [open]);
+    if (!value || value.type === 'application/pdf') {
+      setPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(value);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [value]);
 
-  const choose = (product: ProductOption) => {
-    onChange({ id: product.id, name: product.name, sku: product.sku, imageUrl: product.imageUrl, available: product.available, price: product.price });
-    setQuery('');
-    setOpen(false);
-  };
+  const onPick = async (event: ChangeEvent<HTMLInputElement>) => {
+    const picked = event.target.files?.[0];
+    event.target.value = '';
+    if (!picked) return;
 
-  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setOpen(true);
-      setHighlight((current) => Math.min(current + 1, Math.max(results.length - 1, 0)));
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setHighlight((current) => Math.max(current - 1, 0));
-    } else if (event.key === 'Enter' && open && results[highlight]) {
-      event.preventDefault();
-      choose(results[highlight]);
-    } else if (event.key === 'Escape') {
-      setOpen(false);
+    setBusy(true);
+    try {
+      if (picked.type === 'application/pdf') {
+        if (picked.size > MAX_BYTES) throw new Error('That PDF is bigger than 5 MB. Please use a smaller file.');
+        onChange(picked);
+      } else {
+        onChange(await compressImage(picked));
+      }
+    } catch (caught) {
+      toast.error("That receipt can't be used", {
+        description: caught instanceof Error ? caught.message : 'Please try another photo or a PDF.',
+      });
+    } finally {
+      setBusy(false);
     }
   };
 
+  const isPdf = value?.type === 'application/pdf';
+
   return (
-    <div ref={wrapper} className="relative">
-      {label && (
-        <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-zinc-300">
-          {label}
-        </label>
-      )}
+    <div>
+      <p className="mb-1.5 text-sm font-medium text-zinc-300">
+        Receipt
+        {required && <span className="ml-0.5 text-gold-400" aria-hidden="true">*</span>}
+      </p>
+
+      <input
+        ref={input}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,application/pdf"
+        className="sr-only"
+        aria-label="Choose the receipt photo or PDF"
+        onChange={(event) => void onPick(event)}
+      />
 
       {value ? (
-        <div
-          className={cn(
-            'flex items-center gap-3 rounded-xl border bg-black/40 px-3 py-2',
-            error ? 'border-red-500/60' : 'border-white/10',
+        <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-black/30 p-3">
+          {preview ? (
+            <img src={preview} alt="Receipt preview" className="h-14 w-14 shrink-0 rounded-lg object-cover" />
+          ) : (
+            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-white/5 text-zinc-400">
+              <FileText className="h-6 w-6" aria-hidden="true" />
+            </span>
           )}
-        >
-          <Thumb url={value.imageUrl} />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-zinc-100">{value.name}</p>
-            <p className="truncate text-xs text-zinc-500">
-              {value.sku}
-              {value.available !== undefined && ` · ${value.available} in stock`}
-            </p>
+            <p className="truncate text-sm text-zinc-200">{isPdf ? value.name : 'Photo ready'}</p>
+            <p className="text-xs text-zinc-500">{Math.max(1, Math.round(value.size / 1024))} KB</p>
           </div>
-          {!disabled && (
-            <button
-              type="button"
-              onClick={() => onChange(null)}
-              aria-label="Choose a different product"
-              className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white/5 hover:text-white"
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </button>
-          )}
+          <Button variant="ghost" size="sm" disabled={disabled || busy} onClick={() => input.current?.click()}>
+            Change
+          </Button>
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            aria-label="Remove the receipt"
+            disabled={disabled}
+            className="rounded-lg p-2 text-zinc-500 transition hover:bg-white/5 hover:text-white"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
       ) : (
-        <>
-          <div
-            className={cn(
-              'flex items-center gap-2 rounded-xl border bg-black/40 px-3 transition focus-within:ring-4',
-              error
-                ? 'border-red-500/60 focus-within:ring-red-500/15'
-                : 'border-white/10 focus-within:border-gold-500/70 focus-within:ring-gold-500/15',
-            )}
-          >
-            <Search className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden="true" />
-            <input
-              id={id}
-              role="combobox"
-              aria-expanded={open}
-              aria-controls={`${id}-list`}
-              aria-autocomplete="list"
-              disabled={disabled}
-              value={query}
-              placeholder={placeholder}
-              autoComplete="off"
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setHighlight(0);
-                setOpen(true);
-              }}
-              onFocus={() => setOpen(true)}
-              onKeyDown={onKeyDown}
-              className="w-full bg-transparent py-3 text-base sm:text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
-            />
-            {isFetching && open && <LoaderCircle className="h-4 w-4 animate-spin text-zinc-500" aria-hidden="true" />}
-          </div>
-
-          {open && (
-            <ul
-              id={`${id}-list`}
-              role="listbox"
-              className="absolute z-20 mt-2 max-h-72 w-full overflow-y-auto rounded-xl border border-white/10 bg-ink-800 p-1 shadow-2xl"
-            >
-              {isError ? (
-                <li className="px-3 py-3 text-sm text-red-300">We could not load products. Try again.</li>
-              ) : results.length === 0 && !isFetching ? (
-                <li className="px-3 py-3 text-sm text-zinc-500">No products found.</li>
-              ) : (
-                results.map((product, index) => (
-                  <li key={product.id} role="option" aria-selected={index === highlight}>
-                    <button
-                      type="button"
-                      onMouseEnter={() => setHighlight(index)}
-                      onClick={() => choose(product)}
-                      className={cn(
-                        'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition',
-                        index === highlight ? 'bg-gold-500/10' : 'hover:bg-white/5',
-                      )}
-                    >
-                      <Thumb url={product.imageUrl} />
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm text-zinc-100">{product.name}</span>
-                        <span className="block truncate text-xs text-zinc-500">
-                          {product.sku} · {product.category}
-                        </span>
-                      </span>
-                      {product.available !== undefined && (
-                        <span className="ml-auto shrink-0 text-xs font-semibold text-gold-300">{product.available} in stock</span>
-                      )}
-                    </button>
-                  </li>
-                ))
-              )}
-            </ul>
-          )}
-        </>
+        <Button
+          variant="secondary"
+          disabled={disabled}
+          loading={busy}
+          icon={<Paperclip className="h-4 w-4" aria-hidden="true" />}
+          onClick={() => input.current?.click()}
+          className={error ? 'border-red-500/60' : ''}
+        >
+          Take or choose the receipt
+        </Button>
       )}
 
       {error && (
@@ -235,6 +118,7 @@ export default function ProductPicker({
           {error}
         </p>
       )}
+      {!error && <p className="mt-1.5 text-xs text-zinc-500">A photo (JPEG, PNG, WebP) or a PDF, up to 5 MB.</p>}
     </div>
   );
 }

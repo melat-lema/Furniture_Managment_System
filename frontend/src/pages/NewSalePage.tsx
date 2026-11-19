@@ -90,7 +90,7 @@ const schema = z
     message: 'Enter the transaction or reference number.',
     path: ['payReference'],
   });
-type Values = z.infer<typeof schema>;
+type Values = z.input<typeof schema>;
 
 export default function NewSalePage() {
   const { user } = useAuth();
