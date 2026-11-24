@@ -7,6 +7,7 @@ import LocationsPage from './pages/LocationsPage';
 import LoginPage from './pages/LoginPage';
 import NewSalePage from './pages/NewSalePage';
 import NotFoundPage from './pages/NotFoundPage';
+import PaymentsPage from './pages/PaymentsPage';
 import ProductsPage from './pages/ProductsPage';
 import RecordProductionPage from './pages/RecordProductionPage';
 import SaleDetailPage from './pages/SaleDetailPage';
@@ -74,6 +75,7 @@ export default function App() {
             <Route path="locations" element={<LocationsPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="payments" element={<PaymentsPage />} />
           </Route>
 
           <Route path="*" element={<NotFoundPage />} />

@@ -263,7 +263,10 @@ export interface SaleDetail {
     lineTotal: string;
   }>;
   payments: PaymentView[];
-  can: { addPayment: boolean };
+  can: { addPayment: boolean; void: boolean; edit: boolean };
+  /** Why this person cannot cancel the sale (null when they can) */
+  voidBlockedReason: string | null;
+  editBlockedReason: string | null;
 }
 
 export interface SalesSummary {
@@ -273,7 +276,12 @@ export interface SalesSummary {
 }
 
 export interface SettingRecord {
-  key: 'low_stock_threshold' | 'max_discount_percent';
+  key:
+    | 'low_stock_threshold'
+    | 'max_discount_percent'
+    | 'payment_reminder_hours'
+    | 'payment_escalation_hours'
+    | 'sale_void_window_hours';
   label: string;
   description: string;
   unit: string;
@@ -287,4 +295,38 @@ export interface ReceiptLink {
   url: string;
   expiresInSeconds: number;
   kind: 'pdf' | 'image';
+}
+
+// ------------------------------------------------------------------ Week 3, days 3 and 4: verification and cancelling
+export interface PaymentRow {
+  id: string;
+  amount: string;
+  method: PaymentMethod;
+  referenceNo: string | null;
+  hasReceipt: boolean;
+  verificationStatus: VerificationStatus;
+  rejectReason: string | null;
+  createdAt: string;
+  verifiedAt: string | null;
+  ageHours: number;
+  overdue: boolean;
+  sale: { id: string; code: string; total: string; status: 'ACTIVE' | 'VOIDED'; customerName: string | null };
+  location: { id: string; name: string };
+  salesperson: { id: string; fullName: string };
+  recordedBy: { id: string; fullName: string };
+  verifiedBy: { id: string; fullName: string } | null;
+}
+
+export interface PaymentsSummary {
+  reminderHours: number;
+  unverified: { count: number; amount: string; oldestHours: number | null };
+  overdue: number;
+  rejected: number;
+  verifiedThisMonth: string;
+}
+
+export interface LeaderboardRow {
+  salesperson: { id: string; fullName: string; isActive: boolean; showroom: { id: string; name: string } };
+  count: number;
+  total: string;
 }
