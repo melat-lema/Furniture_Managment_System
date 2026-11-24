@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../common/types/auth-user';
+import { fieldError } from '../common/utils/field-error';
 import { PrismaService } from '../prisma/prisma.service';
 import type { UpdateSettingsDto } from './dto/update-settings.dto';
 
@@ -21,6 +22,30 @@ export const SETTING_DEFS = {
     min: 0,
     max: 100,
     fallback: 100,
+  },
+  payment_reminder_hours: {
+    label: 'Remind me about unverified payments after',
+    description: 'A payment the owner has not checked for this long is marked overdue (and reminders are sent).',
+    unit: 'hours',
+    min: 1,
+    max: 720,
+    fallback: 24,
+  },
+  payment_escalation_hours: {
+    label: 'Escalate unverified payments after',
+    description: 'If a payment is still unchecked after this long, the backup approver is told. Must be later than the reminder.',
+    unit: 'hours',
+    min: 1,
+    max: 720,
+    fallback: 48,
+  },
+  sale_void_window_hours: {
+    label: 'A showroom can cancel or correct its own sale for',
+    description: 'After this many hours only the owner can cancel or change a sale. 0 means showrooms can never do it.',
+    unit: 'hours',
+    min: 0,
+    max: 720,
+    fallback: 24,
   },
 } as const;
 
@@ -64,6 +89,13 @@ export class SettingsService {
 
   async update(dto: UpdateSettingsDto, actor: AuthUser, ip: string | null) {
     const before = Object.fromEntries((await this.list()).map((setting) => [setting.key, setting.value]));
+
+    // the escalation must come after the reminder
+    const reminder = dto.payment_reminder_hours ?? (await this.getNumber('payment_reminder_hours'));
+    const escalation = dto.payment_escalation_hours ?? (await this.getNumber('payment_escalation_hours'));
+    if (escalation <= reminder) {
+      throw fieldError('payment_escalation_hours', 'This must be later than the reminder time.');
+    }
 
     for (const key of KEYS) {
       const value = dto[key];
