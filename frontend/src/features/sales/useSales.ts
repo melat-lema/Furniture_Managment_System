@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type {
+  LeaderboardRow,
   Paginated,
   PaymentMethod,
   ReceiptLink,
@@ -107,4 +108,38 @@ export function useAddPayment() {
 /** Asks the server for a link that works for 5 minutes. */
 export async function fetchReceiptLink(paymentId: string): Promise<ReceiptLink> {
   return (await api.get<ReceiptLink>(`/payments/${paymentId}/receipt`)).data;
+}
+
+// ------------------------------------------------------------------ cancel, correct, leaderboard
+export function useCancelSale() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { silent: true }, // the dialog shows its own errors
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => (await api.post<SaleDetail>(`/sales/${id}/void`, { reason })).data,
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['sales'] }),
+        queryClient.invalidateQueries({ queryKey: ['payments'] }),
+        queryClient.invalidateQueries({ queryKey: ['stock'] }),
+      ]),
+  });
+}
+
+export function useUpdateSale() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { silent: true },
+    mutationFn: async ({ id, ...body }: { id: string; customerName: string | null; customerPhone: string | null; salespersonId: string }) =>
+      (await api.patch<SaleDetail>(`/sales/${id}`, body)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sales'] }),
+  });
+}
+
+export function useLeaderboard(period: 'today' | 'month', locationId = '') {
+  return useQuery({
+    queryKey: ['sales', 'leaderboard', period, locationId],
+    queryFn: async () =>
+      (await api.get<LeaderboardRow[]>('/sales/leaderboard', { params: { period, ...(locationId && { locationId }) } })).data,
+    meta: { silent: true },
+  });
 }
