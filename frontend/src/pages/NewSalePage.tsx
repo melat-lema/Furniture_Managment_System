@@ -364,7 +364,23 @@ export default function NewSalePage() {
                     error={errors.payReference?.message}
                     {...register('payReference')}
                   />
-                  <ReceiptPicker value={receipt} onChange={setReceipt} required error={receiptError} disabled={busy} />
+                  <div className="space-y-1.5">
+                    <label htmlFor="sale-payment-receipt" className="block text-sm font-medium text-zinc-300">
+                      Payment receipt <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      id="sale-payment-receipt"
+                      type="file"
+                      accept="image/*,.pdf"
+                      disabled={busy}
+                      onChange={(event) => {
+                        setReceipt(event.target.files?.[0] ?? null);
+                        if (event.target.files?.[0]) setReceiptError(null);
+                      }}
+                      className="block w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-zinc-300 file:mr-3 file:rounded-lg file:border-0 file:bg-gold-500 file:px-3 file:py-2 file:text-sm file:font-medium file:text-ink-950"
+                    />
+                    {receiptError && <p role="alert" className="text-sm text-red-400">{receiptError}</p>}
+                  </div>
                 </>
               )}
             </>
