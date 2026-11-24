@@ -3,12 +3,13 @@ import { SettingsModule } from '../settings/settings.module';
 import { StockModule } from '../stock/stock.module';
 import { StorageModule } from '../storage/storage.module';
 import { PaymentsController } from './payments.controller';
+import { PaymentsService } from './payments.service';
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
 
 @Module({
   imports: [StockModule, StorageModule, SettingsModule],
   controllers: [SalesController, PaymentsController],
-  providers: [SalesService],
+  providers: [SalesService, PaymentsService],
 })
 export class SalesModule {}

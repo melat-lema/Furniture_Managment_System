@@ -3,7 +3,6 @@ import { ConflictException, Injectable } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { ErrorCode } from '../common/constants';
 import type { AuthUser } from '../common/types/auth-user';
-import type { SalePaymentStatus } from '../common/types/sales';
 import { businessDayStart, startOfBusinessDay, startOfBusinessMonth } from '../common/utils/dates';
 import { fieldError, notFound, ruleError } from '../common/utils/field-error';
 import { type Paginated, pageArgs } from '../common/utils/pagination';
@@ -13,10 +12,10 @@ import { SettingsService } from '../settings/settings.service';
 import { StockLedgerService } from '../stock/stock-ledger.service';
 import { detectReceiptType } from '../storage/image-type';
 import { StorageService } from '../storage/storage.service';
-import type { AddPaymentDto, CreateSaleDto, ListSalesQueryDto } from './dto/sales.dto';
+import type { AddPaymentDto, CreateSaleDto, LeaderboardQueryDto, ListSalesQueryDto, UpdateSaleDto, VoidSaleDto } from './dto/sales.dto';
+import { paidOf, statusFor } from './sale-money';
 
 const D = Prisma.Decimal;
-type Money = Prisma.Decimal;
 
 const LIST_INCLUDE = {
   location: { select: { id: true, name: true } },
@@ -43,17 +42,6 @@ const DETAIL_INCLUDE = {
   },
 } satisfies Prisma.SaleInclude;
 type DetailRow = Prisma.SaleGetPayload<{ include: typeof DETAIL_INCLUDE }>;
-
-/** Rejected payments do not count as paid. */
-function paidOf(payments: Array<{ amount: Money; verificationStatus: string }>): Money {
-  return payments.filter((p) => p.verificationStatus !== 'REJECTED').reduce((sum, p) => sum.add(p.amount), new D(0));
-}
-
-function statusFor(total: Money, paid: Money): SalePaymentStatus {
-  if (paid.gte(total)) return 'PAID';
-  if (paid.gt(0)) return 'PARTIAL';
-  return 'PENDING';
-}
 
 @Injectable()
 export class SalesService {
@@ -96,7 +84,8 @@ export class SalesService {
   }
 
   async get(id: string, user: AuthUser) {
-    return this.present(await this.load(id, user), user);
+    const windowHours = await this.settings.getNumber('sale_void_window_hours');
+    return this.present(await this.load(id, user), user, windowHours);
   }
 
   /** Numbers for the dashboards (the showroom sees its own, the owner sees everything). */
@@ -326,6 +315,130 @@ export class SalesService {
     return { url, expiresInSeconds: 300, kind: payment.receiptPath.toLowerCase().endsWith('.pdf') ? 'pdf' : 'image' };
   }
 
+  // ---------------------------------------------------------------- cancel
+  /**
+   * Cancels a sale: the goods go back into the showroom stock and its payments stop counting.
+   * A showroom can do this for a short time and only while the owner has not verified a payment.
+   * After that, only the owner can.
+   */
+  async void(id: string, dto: VoidSaleDto, user: AuthUser, ip: string | null) {
+    const sale = await this.load(id, user);
+    const windowHours = await this.settings.getNumber('sale_void_window_hours');
+    const blocked = this.voidGate(sale, user, windowHours);
+    if (blocked) throw ruleError(sale.status !== 'ACTIVE' ? ErrorCode.SALE_CLOSED : ErrorCode.SALE_LOCKED, blocked);
+
+    await this.prisma.$transaction(async (tx) => {
+      const closed = await tx.sale.updateMany({
+        where: { id, status: 'ACTIVE' },
+        data: { status: 'VOIDED', voidedAt: new Date(), voidedById: user.id, voidReason: dto.reason },
+      });
+      if (closed.count !== 1) throw ruleError(ErrorCode.SALE_CLOSED, 'This sale was cancelled a moment ago.');
+
+      // money that was recorded no longer counts
+      await tx.payment.updateMany({
+        where: { saleId: id, verificationStatus: { not: 'REJECTED' } },
+        data: { verificationStatus: 'REJECTED', rejectReason: `Sale cancelled: ${dto.reason}` },
+      });
+
+      // the goods are back on the showroom shelf
+      for (const item of sale.items) {
+        await this.ledger.applyMovement(tx, {
+          productId: item.productId,
+          locationId: sale.locationId,
+          qtyChange: item.quantity,
+          reason: 'VOID',
+          refType: 'sale',
+          refId: sale.id,
+          note: `Sale ${sale.code} cancelled`,
+          userId: user.id,
+          productName: item.product.name,
+        });
+      }
+    });
+
+    await this.audit.log({
+      userId: user.id,
+      action: 'VOID',
+      tableName: 'Sale',
+      recordId: id,
+      newValue: { code: sale.code, reason: dto.reason, total: sale.total.toString() },
+      ipAddress: ip,
+    });
+    return this.get(id, user);
+  }
+
+  // ------------------------------------------------------------ correction
+  /** Fixes a typo in the customer details, or the person who made the sale. Products and prices never change: cancel and record again. */
+  async update(id: string, dto: UpdateSaleDto, user: AuthUser, ip: string | null) {
+    const sale = await this.load(id, user);
+    const windowHours = await this.settings.getNumber('sale_void_window_hours');
+    const blocked = this.editGate(sale, user, windowHours);
+    if (blocked) throw ruleError(ErrorCode.SALE_LOCKED, blocked);
+
+    let newPerson: string | null = null;
+    if (dto.salespersonId !== undefined && dto.salespersonId !== sale.salesperson.id) {
+      const person = await this.prisma.salesperson.findFirst({ where: { id: dto.salespersonId, showroomId: sale.locationId } });
+      if (!person) throw fieldError('salespersonId', 'Choose a salesperson from this showroom.');
+      if (!person.isActive) throw fieldError('salespersonId', `${person.fullName} is not active. Choose someone else.`);
+      newPerson = person.fullName;
+    }
+
+    await this.prisma.sale.update({
+      where: { id },
+      data: {
+        ...(dto.customerName !== undefined && { customerName: dto.customerName }),
+        ...(dto.customerPhone !== undefined && { customerPhone: dto.customerPhone }),
+        ...(dto.salespersonId !== undefined && { salespersonId: dto.salespersonId }),
+      },
+    });
+
+    await this.audit.log({
+      userId: user.id,
+      action: 'UPDATE',
+      tableName: 'Sale',
+      recordId: id,
+      oldValue: { customerName: sale.customerName, customerPhone: sale.customerPhone, salesperson: sale.salesperson.fullName },
+      newValue: {
+        customerName: dto.customerName ?? sale.customerName,
+        customerPhone: dto.customerPhone ?? sale.customerPhone,
+        salesperson: newPerson ?? sale.salesperson.fullName,
+      },
+      ipAddress: ip,
+    });
+    return this.get(id, user);
+  }
+
+  // ----------------------------------------------------------- leaderboard
+  /** Sales per salesperson (cancelled sales are left out). The showroom sees its own people; the owner sees everyone. */
+  async leaderboard(query: LeaderboardQueryDto, user: AuthUser) {
+    const since =
+      query.period === 'today' ? startOfBusinessDay() : query.period === 'all' ? undefined : startOfBusinessMonth();
+    const where: Prisma.SaleWhereInput = {
+      status: 'ACTIVE',
+      ...(since && { soldAt: { gte: since } }),
+      ...(user.role === 'OWNER' ? (query.locationId ? { locationId: query.locationId } : {}) : { locationId: user.locationId ?? '__none__' }),
+    };
+
+    const grouped = await this.prisma.sale.groupBy({
+      by: ['salespersonId'],
+      where,
+      _count: { _all: true },
+      _sum: { total: true },
+    });
+    const people = await this.prisma.salesperson.findMany({
+      where: { id: { in: grouped.map((row) => row.salespersonId) } },
+      select: { id: true, fullName: true, isActive: true, showroom: { select: { id: true, name: true } } },
+    });
+    const byId = new Map(people.map((person) => [person.id, person]));
+
+    return grouped
+      .flatMap((row) => {
+        const person = byId.get(row.salespersonId);
+        return person ? [{ salesperson: person, count: row._count._all, total: (row._sum.total ?? new D(0)).toString() }] : [];
+      })
+      .sort((a, b) => Number(b.total) - Number(a.total));
+  }
+
   // --------------------------------------------------------------- helpers
   private async load(id: string, user: AuthUser): Promise<DetailRow> {
     const row = await this.prisma.sale.findUnique({ where: { id }, include: DETAIL_INCLUDE });
@@ -333,7 +446,9 @@ export class SalesService {
     return row;
   }
 
-  private present(row: DetailRow, user: AuthUser) {
+  private present(row: DetailRow, user: AuthUser, windowHours: number) {
+    const voidBlocked = this.voidGate(row, user, windowHours);
+    const editBlocked = this.editGate(row, user, windowHours);
     const paid = paidOf(row.payments);
     const balance = row.total.sub(paid);
     return {
@@ -380,8 +495,37 @@ export class SalesService {
         recordedBy: payment.recordedBy,
         verifiedBy: payment.verifiedBy,
       })),
-      can: { addPayment: user.role === 'SHOWROOM' && row.status === 'ACTIVE' && balance.gt(0) },
+      can: {
+        addPayment: user.role === 'SHOWROOM' && row.status === 'ACTIVE' && balance.gt(0),
+        void: voidBlocked === null,
+        edit: editBlocked === null,
+      },
+      /** Why this sale cannot be cancelled by this person (null when it can). Shown to the user. */
+      voidBlockedReason: row.status === 'ACTIVE' ? voidBlocked : null,
+      editBlockedReason: row.status === 'ACTIVE' ? editBlocked : null,
     };
+  }
+
+  /** null = allowed. Otherwise the reason in plain words. */
+  private voidGate(row: DetailRow, user: AuthUser, windowHours: number): string | null {
+    if (row.status !== 'ACTIVE') return 'This sale is already cancelled.';
+    if (user.role === 'OWNER') return null;
+    const ageHours = (Date.now() - row.soldAt.getTime()) / 3_600_000;
+    if (ageHours > windowHours) {
+      return `A showroom can only cancel a sale within ${windowHours} hours. Ask the owner to cancel it.`;
+    }
+    if (row.payments.some((payment) => payment.verificationStatus === 'VERIFIED')) {
+      return 'The owner has already verified a payment on this sale, so only the owner can cancel it.';
+    }
+    return null;
+  }
+
+  private editGate(row: DetailRow, user: AuthUser, windowHours: number): string | null {
+    if (row.status !== 'ACTIVE') return 'A cancelled sale cannot be changed.';
+    if (user.role === 'OWNER') return null;
+    const ageHours = (Date.now() - row.soldAt.getTime()) / 3_600_000;
+    if (ageHours > windowHours) return `A showroom can only correct a sale within ${windowHours} hours. Ask the owner.`;
+    return null;
   }
 
   private async ownShowroom(user: AuthUser) {

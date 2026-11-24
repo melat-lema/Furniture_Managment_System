@@ -14,6 +14,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
@@ -133,4 +134,41 @@ export class ListSalesQueryDto extends PaginationQueryDto {
   @IsOptional()
   @Matches(DAY, { message: 'Use the format YYYY-MM-DD.' })
   to?: string;
+}
+
+export class VoidSaleDto {
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString({ message: 'Please explain why the sale is cancelled.' })
+  @MinLength(3, { message: 'Please explain why the sale is cancelled.' })
+  @MaxLength(200, { message: 'The reason is too long (200 characters at most).' })
+  reason!: string;
+}
+
+/** Only these details can be corrected after a sale. Products and prices cannot: cancel and record again. */
+export class UpdateSaleDto {
+  @IsOptional()
+  @Transform(trimToNull)
+  @IsString()
+  @MaxLength(100, { message: 'The customer name is too long.' })
+  customerName?: string | null;
+
+  @IsOptional()
+  @Transform(trimToNull)
+  @Matches(PHONE, { message: 'Enter a valid phone number, for example +251 911 000000.' })
+  customerPhone?: string | null;
+
+  @IsOptional()
+  @IsUUID('all', { message: 'Choose who made the sale.' })
+  salespersonId?: string;
+}
+
+export class LeaderboardQueryDto {
+  @IsOptional()
+  @IsIn(['today', 'month', 'all'])
+  period?: 'today' | 'month' | 'all';
+
+  /** owner only */
+  @IsOptional()
+  @IsUUID('all')
+  locationId?: string;
 }
