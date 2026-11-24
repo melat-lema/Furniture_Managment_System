@@ -1,10 +1,13 @@
-import { ArrowLeft, Armchair, Banknote, Eye, Plus } from 'lucide-react';
+import { ArrowLeft, Armchair, Ban, Banknote, Eye, Pencil, Plus } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FormAlert from '../components/FormAlert';
+import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import QueryError from '../components/ui/QueryError';
 import AddPaymentModal from '../features/sales/AddPaymentModal';
+import CancelSaleModal from '../features/sales/CancelSaleModal';
+import EditSaleModal from '../features/sales/EditSaleModal';
 import { METHOD_LABEL, SalePaymentBadge, VerificationBadge } from '../features/sales/PaymentBadges';
 import ReceiptViewerModal from '../features/sales/ReceiptViewerModal';
 import { useSale } from '../features/sales/useSales';
@@ -24,6 +27,8 @@ export default function SaleDetailPage() {
   const { data: sale, isPending, error, refetch } = useSale(id);
 
   const [adding, setAdding] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [viewing, setViewing] = useState<{ id: string; title: string } | null>(null);
 
   if (isPending) {
@@ -59,21 +64,44 @@ export default function SaleDetailPage() {
           <div>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="font-display text-4xl font-semibold text-white">{sale.code}</h1>
-              <SalePaymentBadge status={sale.paymentStatus} />
+              {sale.status === 'VOIDED' ? <Badge tone="red">Cancelled</Badge> : <SalePaymentBadge status={sale.paymentStatus} />}
             </div>
             <p className="mt-2 text-zinc-400">
               {sale.location.name} · {formatDateTime(sale.soldAt)}
             </p>
           </div>
-          {sale.can.addPayment && (
-            <Button icon={<Plus className="h-4 w-4" aria-hidden="true" />} onClick={() => setAdding(true)}>
-              Record a payment
-            </Button>
-          )}
+          <div className="flex flex-wrap gap-3">
+            {sale.can.addPayment && (
+              <Button icon={<Plus className="h-4 w-4" aria-hidden="true" />} onClick={() => setAdding(true)}>
+                Record a payment
+              </Button>
+            )}
+            {sale.can.edit && (
+              <Button variant="secondary" icon={<Pencil className="h-4 w-4" aria-hidden="true" />} onClick={() => setEditing(true)}>
+                Correct details
+              </Button>
+            )}
+            {sale.can.void && (
+              <Button variant="ghost" icon={<Ban className="h-4 w-4" aria-hidden="true" />} onClick={() => setCancelling(true)}>
+                Cancel sale
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
-      {sale.paymentStatus !== 'PAID' && (
+      {sale.status === 'VOIDED' && (
+        <FormAlert
+          tone="warning"
+          title="This sale was cancelled"
+          message={`${sale.voidReason ?? 'No reason was given.'}${sale.voidedAt ? ` (${formatDateTime(sale.voidedAt)})` : ''} The goods went back into the stock and its payments no longer count.`}
+        />
+      )}
+      {sale.status === 'ACTIVE' && !sale.can.void && sale.voidBlockedReason && (
+        <p className="text-xs text-zinc-500">Cancelling: {sale.voidBlockedReason}</p>
+      )}
+
+      {sale.status === 'ACTIVE' && sale.paymentStatus !== 'PAID' && (
         <FormAlert
           tone="warning"
           title={sale.paymentStatus === 'PENDING' ? 'Nothing has been paid yet' : 'Partly paid'}
@@ -203,6 +231,8 @@ export default function SaleDetailPage() {
       </section>
 
       {sale.can.addPayment && <AddPaymentModal open={adding} onClose={() => setAdding(false)} sale={sale} />}
+      {sale.can.edit && <EditSaleModal open={editing} onClose={() => setEditing(false)} sale={sale} />}
+      {sale.can.void && <CancelSaleModal open={cancelling} onClose={() => setCancelling(false)} sale={sale} />}
       <ReceiptViewerModal open={viewing !== null} onClose={() => setViewing(null)} paymentId={viewing?.id ?? null} title={viewing?.title ?? ''} />
     </div>
   );

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo';
 import { useAuth } from '../features/auth/useAuth';
+import { usePaymentsSummary } from '../features/payments/usePayments';
 import { useTransferSummary } from '../features/transfers/useTransfers';
 import { cn } from '../lib/cn';
 import { ROLE_LABELS, type AuthUser } from '../types/auth';
@@ -19,6 +20,8 @@ function Sidebar({ user, signingOut, onNavigate, onLogout }: SidebarProps) {
   const items = NAV_BY_ROLE[user.role];
   const { data: transferSummary } = useTransferSummary();
   const waiting = transferSummary?.incomingWaiting ?? 0;
+  const { data: paymentsSummary } = usePaymentsSummary(user.role === 'OWNER');
+  const waitingPayments = paymentsSummary?.unverified.count ?? 0;
 
   return (
     <div className="flex h-full flex-col border-r border-white/10 bg-ink-900">
@@ -67,6 +70,14 @@ function Sidebar({ user, signingOut, onNavigate, onLogout }: SidebarProps) {
                   aria-label={`${waiting} transfer${waiting === 1 ? '' : 's'} waiting for you`}
                 >
                   {waiting}
+                </span>
+              )}
+              {item.badge === 'paymentsWaiting' && waitingPayments > 0 && (
+                <span
+                  className="ml-auto rounded-full bg-gold-500 px-2 py-0.5 text-[11px] font-bold text-ink-950"
+                  aria-label={`${waitingPayments} payment${waitingPayments === 1 ? '' : 's'} waiting for you`}
+                >
+                  {waitingPayments}
                 </span>
               )}
             </NavLink>

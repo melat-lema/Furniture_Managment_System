@@ -1,9 +1,12 @@
-import { ArrowRightLeft, Hammer, Package, ReceiptText, ShoppingBag, Warehouse, type LucideIcon } from 'lucide-react';
+import { ArrowRightLeft, Hammer, Package, ShoppingBag, Warehouse, type LucideIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import ConnectionStatus from '../components/ConnectionStatus';
 import { useAuth } from '../features/auth/useAuth';
 import AttentionLists from '../features/dashboard/AttentionLists';
+import LeaderboardCard from '../features/dashboard/LeaderboardCard';
+import PaymentsOwnerCards from '../features/dashboard/PaymentsOwnerCards';
 import SalesSummaryCards from '../features/dashboard/SalesSummaryCards';
+import ShowroomAttention from '../features/dashboard/ShowroomAttention';
 import PriceChangesCard from '../features/products/PriceChangesCard';
 import TransferSummaryCards from '../features/transfers/TransferSummaryCards';
 import RecentActivityCard from '../features/stock/RecentActivityCard';
@@ -50,10 +53,7 @@ interface PlannedCard {
 
 /** Placeholders for what is still to come. Each card disappears when the feature is built. */
 const PLANNED: Record<Role, PlannedCard[]> = {
-  OWNER: [
-    { icon: ReceiptText, title: 'Payments to verify', text: 'Receipts waiting for your approval, with overdue alerts.' },
-    { icon: ShoppingBag, title: 'Sales by salesperson', text: 'Who is selling what, and where.' },
-  ],
+  OWNER: [],
   WORKSHOP_MANAGER: [],
   STORE_MANAGER: [],
   SHOWROOM: [],
@@ -100,6 +100,10 @@ export default function DashboardPage() {
       </section>
 
       {(user.role === 'SHOWROOM' || user.role === 'OWNER') && <SalesSummaryCards />}
+
+      {user.role === 'OWNER' && <PaymentsOwnerCards />}
+      {user.role === 'SHOWROOM' && <ShowroomAttention />}
+      {(user.role === 'SHOWROOM' || user.role === 'OWNER') && <LeaderboardCard />}
 
       <TransferSummaryCards role={user.role} />
 

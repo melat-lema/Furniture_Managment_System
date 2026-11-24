@@ -21,7 +21,7 @@ export interface NavItem {
   /** true = not built yet; shown greyed out with a "Soon" badge */
   soon?: boolean;
   /** shows a live number next to the label */
-  badge?: 'incomingWaiting';
+  badge?: 'incomingWaiting' | 'paymentsWaiting';
 }
 
 const dashboard: NavItem = { label: 'Dashboard', to: '/', icon: LayoutDashboard };
@@ -43,7 +43,7 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { label: 'Users', to: '/users', icon: Users },
     { label: 'Sales', to: '/sales', icon: ShoppingBag },
     { label: 'Salespeople', to: '/salespeople', icon: Users },
-    { label: 'Payments to verify', to: '/payments', icon: ReceiptText, soon: true },
+    { label: 'Payments to verify', to: '/payments', icon: ReceiptText, badge: 'paymentsWaiting' },
     { label: 'Settings', to: '/settings', icon: Settings },
   ],
   WORKSHOP_MANAGER: [dashboard, products, categories, production, stock, transfers],
