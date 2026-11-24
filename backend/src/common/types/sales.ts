@@ -6,3 +6,6 @@ export type SalePaymentStatus = (typeof SALE_PAYMENT_STATUSES)[number];
 
 export const SALE_STATUSES = ['ACTIVE', 'VOIDED'] as const;
 export type SaleStatus = (typeof SALE_STATUSES)[number];
+
+export const VERIFICATION_STATUSES = ['UNVERIFIED', 'VERIFIED', 'REJECTED'] as const;
+export type VerificationStatus = (typeof VERIFICATION_STATUSES)[number];

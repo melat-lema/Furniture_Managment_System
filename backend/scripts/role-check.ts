@@ -72,11 +72,7 @@ async function callForm(
 ): Promise<ApiResponse> {
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) form.append(key, value);
-  if (file) {
-    const receiptBytes = new Uint8Array(file.bytes.byteLength);
-    receiptBytes.set(file.bytes);
-    form.append('receipt', new Blob([receiptBytes.buffer], { type: file.type }), file.name);
-  }
+  if (file) form.append('receipt', new Blob([file.bytes], { type: file.type }), file.name);
 
   const response = await fetch(`${API}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${who.token}` }, body: form });
   const text = await response.text();
@@ -96,6 +92,7 @@ const TINY_PNG = Uint8Array.from(
 
 /** The discount limit before this test changed it, so it can be put back. */
 let discountToRestore: number | null = null;
+let voidWindowToRestore: number | null = null;
 
 function record(name: string, ok: boolean, detail = ''): void {
   results.push({ name, ok, detail });
@@ -485,6 +482,99 @@ async function run(): Promise<void> {
     console.log('SKIP  receipt upload checks (run with ROLE_CHECK_UPLOADS=1 to test Supabase storage)');
   }
 
+  // ---- the owner verifies payments
+  const partId: string = part.body?.payments?.[0]?.id;
+  const restId: string = rest.body?.payments?.[1]?.id;
+  expectStatus('OWNER: can read the payments queue', await call(owner, 'GET', '/payments?status=UNVERIFIED'), 200);
+  expectStatus('SHOWROOM: can read its own payments', await call(showroomAcc, 'GET', '/payments'), 200);
+  for (const who of [workshopMgr, storeMgr]) {
+    expectStatus(`${who.role}: cannot read payments`, await call(who, 'GET', '/payments'), 403, 'FORBIDDEN_ROLE');
+  }
+  expectStatus('OWNER: can read the payments summary', await call(owner, 'GET', '/payments/summary'), 200);
+  expectStatus('SHOWROOM: can read its payments summary', await call(showroomAcc, 'GET', '/payments/summary'), 200);
+  expectStatus('STORE_MANAGER: cannot read the payments summary', await call(storeMgr, 'GET', '/payments/summary'), 403, 'FORBIDDEN_ROLE');
+  expectStatus('SHOWROOM: cannot verify a payment', await call(showroomAcc, 'POST', `/payments/${partId}/verify`), 403, 'FORBIDDEN_ROLE');
+  const noWhy = await call(owner, 'POST', `/payments/${partId}/reject`, {});
+  expectStatus('Rejecting needs a reason', noWhy, 400, 'VALIDATION_ERROR');
+  record('...and the error points at the reason', noWhy.body?.errors?.[0]?.field === 'reason', JSON.stringify(noWhy.body?.errors));
+  const verified = await call(owner, 'POST', `/payments/${partId}/verify`);
+  expectStatus('OWNER: can verify a payment', verified, 200);
+  record('...it is now verified', verified.body?.verificationStatus === 'VERIFIED', `got ${verified.body?.verificationStatus}`);
+  expectStatus('A checked payment cannot be checked again', await call(owner, 'POST', `/payments/${partId}/verify`), 409, 'PAYMENT_STATE');
+
+  // a rejected payment stops counting, and the showroom can record it again
+  const sale2 = await call(showroomAcc, 'POST', '/sales', sale());
+  expectStatus('SHOWROOM: records a second sale', sale2, 201);
+  const sale2Id: string = sale2.body?.id;
+  const full = await callForm(showroomAcc, `/sales/${sale2Id}/payments`, { amount: '2500', method: 'CASH' });
+  record('...paid in full', full.body?.paymentStatus === 'PAID', `got ${full.body?.paymentStatus}`);
+  const rejected = await call(owner, 'POST', `/payments/${full.body?.payments?.[0]?.id}/reject`, { reason: 'amount does not match the receipt' });
+  expectStatus('OWNER: can reject a payment with a reason', rejected, 200);
+  const afterReject = await call(showroomAcc, 'GET', `/sales/${sale2Id}`);
+  record('...the sale is unpaid again', afterReject.body?.paymentStatus === 'PENDING', `got ${afterReject.body?.paymentStatus}`);
+  record('...the showroom sees the reason', String(afterReject.body?.payments?.[0]?.rejectReason).includes('does not match'), 'reason missing');
+  const again = await callForm(showroomAcc, `/sales/${sale2Id}/payments`, { amount: '2500', method: 'CASH' });
+  expectStatus('SHOWROOM: records the payment again', again, 201);
+  const againId: string = again.body?.payments?.[1]?.id;
+
+  const bulk = await call(owner, 'POST', '/payments/bulk-verify', { ids: [againId, restId, '00000000-0000-4000-8000-000000000000'] });
+  expectStatus('OWNER: can verify several payments at once', bulk, 200);
+  record('...two verified, one skipped', bulk.body?.verified === 2 && bulk.body?.skipped === 1, JSON.stringify(bulk.body));
+  expectStatus('SHOWROOM: cannot verify in bulk', await call(showroomAcc, 'POST', '/payments/bulk-verify', { ids: [againId] }), 403, 'FORBIDDEN_ROLE');
+  expectStatus('An empty bulk list is rejected', await call(owner, 'POST', '/payments/bulk-verify', { ids: [] }), 400, 'VALIDATION_ERROR');
+  expectStatus('Escalation must come after the reminder', await call(owner, 'PATCH', '/settings', { payment_reminder_hours: 5, payment_escalation_hours: 1 }), 400, 'VALIDATION_ERROR');
+
+  // ---- cancelling and correcting sales
+  const voidIt = (who: Account, id: string, body: unknown) => call(who, 'POST', `/sales/${id}/void`, body);
+  expectStatus('A showroom cannot cancel a sale the owner has verified', await voidIt(showroomAcc, saleId, { reason: 'changed mind' }), 409, 'SALE_LOCKED');
+  expectStatus('Cancelling needs a reason', await voidIt(owner, saleId, {}), 400, 'VALIDATION_ERROR');
+  for (const who of [workshopMgr, storeMgr]) {
+    expectStatus(`${who.role}: cannot cancel a sale`, await voidIt(who, saleId, { reason: 'nope' }), 403, 'FORBIDDEN_ROLE');
+  }
+  const beforeVoid = await levelOf(showroomAcc, showroom.id);
+  expectStatus('OWNER: can cancel any sale', await voidIt(owner, saleId, { reason: 'role check' }), 200);
+  const afterVoid = await levelOf(showroomAcc, showroom.id);
+  record('...the goods went back into the showroom stock (+1)', (afterVoid ?? 0) === (beforeVoid ?? 0) + 1, `before ${beforeVoid}, after ${afterVoid}`);
+  const voided = await call(owner, 'GET', `/sales/${saleId}`);
+  record('...the sale is marked cancelled', voided.body?.status === 'VOIDED', `got ${voided.body?.status}`);
+  record('...its payments no longer count', (voided.body?.payments ?? []).every((p: { verificationStatus: string }) => p.verificationStatus === 'REJECTED'), 'a payment still counted');
+  expectStatus('A cancelled sale takes no payments', await callForm(showroomAcc, `/sales/${saleId}/payments`, { amount: '10', method: 'CASH' }), 409, 'SALE_CLOSED');
+  expectStatus('A cancelled sale cannot be cancelled twice', await voidIt(owner, saleId, { reason: 'again' }), 409, 'SALE_CLOSED');
+
+  const sale3 = await call(showroomAcc, 'POST', '/sales', sale());
+  const sale3Id: string = sale3.body?.id;
+  await callForm(showroomAcc, `/sales/${sale3Id}/payments`, { amount: '500', method: 'CASH' });
+  const beforeOwn = await levelOf(showroomAcc, showroom.id);
+  expectStatus('SHOWROOM: can cancel its own recent sale (nothing verified yet)', await voidIt(showroomAcc, sale3Id, { reason: 'customer changed their mind' }), 200);
+  const afterOwn = await levelOf(showroomAcc, showroom.id);
+  record('...the goods went back (+1)', (afterOwn ?? 0) === (beforeOwn ?? 0) + 1, `before ${beforeOwn}, after ${afterOwn}`);
+
+  // correcting details
+  const sale4 = await call(showroomAcc, 'POST', '/sales', sale());
+  const sale4Id: string = sale4.body?.id;
+  expectStatus('SHOWROOM: can correct the customer name', await call(showroomAcc, 'PATCH', `/sales/${sale4Id}`, { customerName: 'Corrected Name' }), 200);
+  expectStatus('The salesperson must be active', await call(showroomAcc, 'PATCH', `/sales/${sale4Id}`, { salespersonId: ben.body?.id }), 400, 'VALIDATION_ERROR');
+  expectStatus('STORE_MANAGER: cannot correct a sale', await call(storeMgr, 'PATCH', `/sales/${sale4Id}`, { customerName: 'x' }), 403, 'FORBIDDEN_ROLE');
+
+  // the time limit for showrooms
+  const settingsAgain = await call(owner, 'GET', '/settings');
+  const currentWindow = (settingsAgain.body ?? []).find((row: { key: string }) => row.key === 'sale_void_window_hours')?.value;
+  voidWindowToRestore = typeof currentWindow === 'number' ? currentWindow : 24;
+  expectStatus('OWNER: can set the cancel window to 0 hours (for this test)', await call(owner, 'PATCH', '/settings', { sale_void_window_hours: 0 }), 200);
+  expectStatus('After the window, a showroom cannot cancel', await voidIt(showroomAcc, sale4Id, { reason: 'too late' }), 409, 'SALE_LOCKED');
+  expectStatus('After the window, a showroom cannot correct', await call(showroomAcc, 'PATCH', `/sales/${sale4Id}`, { customerName: 'Late' }), 409, 'SALE_LOCKED');
+  expectStatus('After the window, the owner still can correct', await call(owner, 'PATCH', `/sales/${sale4Id}`, { customerName: 'Owner fix' }), 200);
+  expectStatus('After the window, the owner still can cancel', await voidIt(owner, sale4Id, { reason: 'cleanup' }), 200);
+  await call(owner, 'PATCH', '/settings', { sale_void_window_hours: voidWindowToRestore });
+
+  // ---- sales per salesperson
+  const board = await call(showroomAcc, 'GET', '/sales/leaderboard?period=month');
+  expectStatus('SHOWROOM: can read its leaderboard', board, 200);
+  record('...it lists its own salesperson', (board.body ?? []).some((row: { salesperson: { id: string } }) => row.salesperson.id === anna.body?.id), 'Anna was not listed');
+  expectStatus('OWNER: can read the leaderboard', await call(owner, 'GET', '/sales/leaderboard'), 200);
+  expectStatus('STORE_MANAGER: cannot read the leaderboard', await call(storeMgr, 'GET', '/sales/leaderboard'), 403, 'FORBIDDEN_ROLE');
+  expectStatus('A wrong period is rejected', await call(owner, 'GET', '/sales/leaderboard?period=century'), 400, 'VALIDATION_ERROR');
+
   // ---- accounts: protection and instant sign-out
   expectStatus('OWNER cannot deactivate their own account', await call(owner, 'PATCH', `/users/${owner.id}/active`, { isActive: false }), 409, 'CANNOT_MODIFY_SELF');
   expectStatus('OWNER can deactivate the showroom account', await call(owner, 'PATCH', `/users/${showroomAcc.id}/active`, { isActive: false }), 200);
@@ -498,11 +588,14 @@ async function main(): Promise<void> {
   } catch (error) {
     crashed = error;
   } finally {
-    if (discountToRestore !== null && accounts.OWNER?.token) {
+    if ((discountToRestore !== null || voidWindowToRestore !== null) && accounts.OWNER?.token) {
       try {
-        await call(accounts.OWNER, 'PATCH', '/settings', { max_discount_percent: discountToRestore });
+        await call(accounts.OWNER, 'PATCH', '/settings', {
+          ...(discountToRestore !== null && { max_discount_percent: discountToRestore }),
+          ...(voidWindowToRestore !== null && { sale_void_window_hours: voidWindowToRestore }),
+        });
       } catch {
-        console.error('Could not restore the discount limit. Check Settings.');
+        console.error('Could not restore the settings this test changed. Check the Settings page.');
       }
     }
     try {

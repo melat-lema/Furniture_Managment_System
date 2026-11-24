@@ -54,6 +54,8 @@ export const ErrorCode = {
   OVERPAYMENT: 'OVERPAYMENT',
   SALE_CLOSED: 'SALE_CLOSED',
   RECEIPT_REQUIRED: 'RECEIPT_REQUIRED',
+  PAYMENT_STATE: 'PAYMENT_STATE',
+  SALE_LOCKED: 'SALE_LOCKED',
 } as const;
 
 /** Ethiopia is UTC+3 all year (no daylight saving). "Today" and "this month" use this. */
