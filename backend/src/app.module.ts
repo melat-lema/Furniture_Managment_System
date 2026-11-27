@@ -13,6 +13,7 @@ import { HealthController } from './health.controller';
 import { LocationsModule } from './locations/locations.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
+import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
 import { SalespeopleModule } from './salespeople/salespeople.module';
 import { SettingsModule } from './settings/settings.module';
@@ -38,6 +39,7 @@ import { UsersModule } from './users/users.module';
     SettingsModule,
     SalespeopleModule,
     SalesModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
   providers: [
