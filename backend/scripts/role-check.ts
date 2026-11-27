@@ -85,6 +85,14 @@ async function callForm(
   return { status: response.status, body: json };
 }
 
+/** A request whose answer is text (for example a CSV file) instead of JSON. */
+async function callText(who: Account, path: string): Promise<{ status: number; text: string; type: string }> {
+  const response = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${who.token}` } });
+  return { status: response.status, text: await response.text(), type: response.headers.get('content-type') ?? '' };
+}
+
+const dayText = (offset: number): string => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+
 /** A real 1x1 PNG, used to test receipt uploads. */
 const TINY_PNG = Uint8Array.from(
   Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'),
@@ -574,6 +582,52 @@ async function run(): Promise<void> {
   expectStatus('OWNER: can read the leaderboard', await call(owner, 'GET', '/sales/leaderboard'), 200);
   expectStatus('STORE_MANAGER: cannot read the leaderboard', await call(storeMgr, 'GET', '/sales/leaderboard'), 403, 'FORBIDDEN_ROLE');
   expectStatus('A wrong period is rejected', await call(owner, 'GET', '/sales/leaderboard?period=century'), 400, 'VALIDATION_ERROR');
+
+  // ---- several salespeople selling, and the reports (Week 3, day 6)
+  const carl = await call(showroomAcc, 'POST', '/salespeople', { fullName: `${tag} Carl` });
+  expectStatus('SHOWROOM: adds a third salesperson', carl, 201);
+  const carlSale = await call(showroomAcc, 'POST', '/sales', {
+    salespersonId: carl.body?.id,
+    items: [{ productId: pW, quantity: 1 }],
+    customerName: '=HYPERLINK("http://example.com","click")',
+  });
+  expectStatus('A different salesperson can make a sale', carlSale, 201);
+  record('...it is credited to that salesperson', carlSale.body?.salesperson?.id === carl.body?.id, `got ${carlSale.body?.salesperson?.fullName}`);
+  const carlOnly = await call(showroomAcc, 'GET', `/sales?salespersonId=${carl.body?.id}`);
+  record('The sales list can be filtered by salesperson', (carlOnly.body?.items ?? []).length >= 1 && (carlOnly.body?.items ?? []).every((row: { salesperson: { id: string } }) => row.salesperson.id === carl.body?.id), 'wrong rows');
+  const todayBoard = await call(showroomAcc, 'GET', '/sales/leaderboard?period=today');
+  const carlRow = (todayBoard.body ?? []).find((row: { salesperson: { id: string } }) => row.salesperson.id === carl.body?.id);
+  const annaRow = (todayBoard.body ?? []).find((row: { salesperson: { id: string } }) => row.salesperson.id === anna.body?.id);
+  record('The leaderboard counts each salesperson separately', carlRow?.count === 1 && Number(carlRow?.total) === 2500 && annaRow?.count >= 1, JSON.stringify(todayBoard.body));
+
+  const range = `from=${dayText(-1)}&to=${dayText(1)}`;
+  const report = await call(showroomAcc, 'GET', `/reports/sales?${range}`);
+  expectStatus('SHOWROOM: can read its sales report', report, 200);
+  const sum = (rows: Array<Record<string, number>>, key: string): number => rows.reduce((total, row) => total + Number(row[key]), 0);
+  const t = report.body?.totals ?? {};
+  const near = (a: number, b: number): boolean => Math.abs(a - b) < 0.01;
+  record('Report: the days add up to the total sold', near(sum(report.body?.daily ?? [], 'total'), t.sold), `days ${sum(report.body?.daily ?? [], 'total')} vs ${t.sold}`);
+  record('Report: the showrooms add up to the total sold', near(sum(report.body?.byShowroom ?? [], 'total'), t.sold), 'showrooms differ');
+  record('Report: the salespeople add up to the total sold', near(sum(report.body?.bySalesperson ?? [], 'total'), t.sold), 'people differ');
+  record('Report: verified + waiting + still to pay = sold', near(t.verified + t.pending + t.balance, t.sold), `${t.verified} + ${t.pending} + ${t.balance} vs ${t.sold}`);
+  record('Report: a showroom only sees itself', (report.body?.byShowroom ?? []).length === 1, `saw ${(report.body?.byShowroom ?? []).length} showrooms`);
+  record('Report: lists both salespeople', ['Anna', 'Carl'].every((name) => (report.body?.bySalesperson ?? []).some((row: { fullName: string }) => row.fullName.includes(name))), 'a salesperson was missing');
+  expectStatus('OWNER: can read the sales report', await call(owner, 'GET', `/reports/sales?${range}`), 200);
+  expectStatus('OWNER: can narrow the report to one showroom', await call(owner, 'GET', `/reports/sales?${range}&locationId=${showroom.id}`), 200);
+  for (const who of [workshopMgr, storeMgr]) {
+    expectStatus(`${who.role}: cannot read reports`, await call(who, 'GET', `/reports/sales?${range}`), 403, 'FORBIDDEN_ROLE');
+  }
+  expectStatus('A start date after the end date is rejected', await call(owner, 'GET', `/reports/sales?from=${dayText(1)}&to=${dayText(-1)}`), 400, 'VALIDATION_ERROR');
+  expectStatus('A period longer than a year is rejected', await call(owner, 'GET', `/reports/sales?from=${dayText(-400)}&to=${dayText(0)}`), 400, 'VALIDATION_ERROR');
+
+  const salesFile = await callText(showroomAcc, `/reports/sales/export?${range}`);
+  expectStatus('SHOWROOM: can download the sales CSV', { status: salesFile.status, body: null }, 200);
+  record('...it is a CSV file with the right columns', salesFile.type.includes('text/csv') && salesFile.text.includes('Sale code') && salesFile.text.includes(carlSale.body?.code), 'wrong content');
+  record('...a customer name that looks like a formula is made safe', salesFile.text.includes("'=HYPERLINK") && !/(^|,)=HYPERLINK/m.test(salesFile.text), 'the formula was not neutralised');
+  const paymentsFile = await callText(showroomAcc, `/reports/payments/export?${range}`);
+  expectStatus('SHOWROOM: can download the payments CSV', { status: paymentsFile.status, body: null }, 200);
+  record('...it has the payment columns', paymentsFile.text.includes('Date recorded') && paymentsFile.text.includes('Rejection reason'), 'wrong columns');
+  expectStatus('STORE_MANAGER: cannot download the CSV', { status: (await callText(storeMgr, `/reports/sales/export?${range}`)).status, body: null }, 403);
 
   // ---- accounts: protection and instant sign-out
   expectStatus('OWNER cannot deactivate their own account', await call(owner, 'PATCH', `/users/${owner.id}/active`, { isActive: false }), 409, 'CANNOT_MODIFY_SELF');

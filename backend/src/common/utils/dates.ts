@@ -19,3 +19,13 @@ export function startOfBusinessMonth(now = new Date()): Date {
 export function businessDayStart(day: string): Date {
   return new Date(`${day}T00:00:00+03:00`);
 }
+
+/** A moment as its calendar day in the business time zone, for example "2026-11-08". */
+export function formatBusinessDay(date: Date): string {
+  return new Date(date.getTime() + OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** A moment as "2026-11-08 14:35" in the business time zone (used in CSV files). */
+export function formatBusinessDateTime(date: Date): string {
+  return new Date(date.getTime() + OFFSET_MS).toISOString().slice(0, 16).replace('T', ' ');
+}
