@@ -8,6 +8,7 @@ import {
   Settings,
   ShoppingBag,
   Tags,
+  TrendingUp,
   Users,
   Warehouse,
   type LucideIcon,
@@ -44,6 +45,7 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { label: 'Sales', to: '/sales', icon: ShoppingBag },
     { label: 'Salespeople', to: '/salespeople', icon: Users },
     { label: 'Payments to verify', to: '/payments', icon: ReceiptText, badge: 'paymentsWaiting' },
+    { label: 'Reports', to: '/reports', icon: TrendingUp },
     { label: 'Settings', to: '/settings', icon: Settings },
   ],
   WORKSHOP_MANAGER: [dashboard, products, categories, production, stock, transfers],
@@ -55,6 +57,7 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     transfers,
     { label: 'New sale', to: '/sales/new', icon: ShoppingBag },
     { label: 'My sales', to: '/sales', icon: ReceiptText },
+    { label: 'Reports', to: '/reports', icon: TrendingUp },
     { label: 'Salespeople', to: '/salespeople', icon: Users },
   ],
 };

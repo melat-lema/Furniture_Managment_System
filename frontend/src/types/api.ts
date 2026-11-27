@@ -330,3 +330,31 @@ export interface LeaderboardRow {
   count: number;
   total: string;
 }
+
+// ------------------------------------------------------------------ Week 3, days 5 and 6: reports
+export interface SalesReport {
+  period: { from: string; to: string; days: number };
+  totals: {
+    sales: number;
+    units: number;
+    subtotal: number;
+    discount: number;
+    /** value of all sales in the period */
+    sold: number;
+    /** payments the owner has checked */
+    verified: number;
+    /** payments waiting for the owner */
+    pending: number;
+    /** payments the owner rejected (not counted anywhere) */
+    rejected: number;
+    /** still to be paid by customers */
+    balance: number;
+  };
+  daily: Array<{ date: string; count: number; total: number }>;
+  byShowroom: Array<{ id: string; name: string; count: number; total: number }>;
+  bySalesperson: Array<{ id: string; fullName: string; showroom: string; count: number; total: number }>;
+  topProducts: Array<{ id: string; name: string; sku: string; units: number; revenue: number }>;
+  byCategory: Array<{ name: string; units: number; revenue: number }>;
+  paymentMethods: Array<{ method: PaymentMethod; count: number; amount: number }>;
+  overdue: { count: number; amount: number; reminderHours: number };
+}

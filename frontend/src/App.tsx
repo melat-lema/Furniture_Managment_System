@@ -11,6 +11,7 @@ import PaymentsPage from './pages/PaymentsPage';
 import ProductsPage from './pages/ProductsPage';
 import RecordProductionPage from './pages/RecordProductionPage';
 import SaleDetailPage from './pages/SaleDetailPage';
+import ReportsPage from './pages/ReportsPage';
 import SalesPage from './pages/SalesPage';
 import SalespeoplePage from './pages/SalespeoplePage';
 import SettingsPage from './pages/SettingsPage';
@@ -60,6 +61,7 @@ export default function App() {
 
           {/* Sales: the showroom records and sees its own, the owner sees all */}
           <Route element={<RequireAuth roles={['OWNER', 'SHOWROOM']} />}>
+            <Route path="reports" element={<ReportsPage />} />
             <Route path="sales" element={<SalesPage />} />
             <Route path="sales/:id" element={<SaleDetailPage />} />
             <Route path="salespeople" element={<SalespeoplePage />} />
