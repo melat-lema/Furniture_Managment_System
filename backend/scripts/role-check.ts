@@ -72,7 +72,11 @@ async function callForm(
 ): Promise<ApiResponse> {
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) form.append(key, value);
-  if (file) form.append('receipt', new Blob([file.bytes], { type: file.type }), file.name);
+  if (file) {
+    const bytes = new Uint8Array(file.bytes.byteLength);
+    bytes.set(file.bytes);
+    form.append('receipt', new Blob([bytes.buffer], { type: file.type }), file.name);
+  }
 
   const response = await fetch(`${API}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${who.token}` }, body: form });
   const text = await response.text();
@@ -603,12 +607,12 @@ async function run(): Promise<void> {
   const range = `from=${dayText(-1)}&to=${dayText(1)}`;
   const report = await call(showroomAcc, 'GET', `/reports/sales?${range}`);
   expectStatus('SHOWROOM: can read its sales report', report, 200);
-  const sum = (rows: Array<Record<string, number>>, key: string): number => rows.reduce((total, row) => total + Number(row[key]), 0);
+  const addUp = (rows: Array<Record<string, number>>, key: string): number => rows.reduce((total, row) => total + Number(row[key]), 0);
   const t = report.body?.totals ?? {};
   const near = (a: number, b: number): boolean => Math.abs(a - b) < 0.01;
-  record('Report: the days add up to the total sold', near(sum(report.body?.daily ?? [], 'total'), t.sold), `days ${sum(report.body?.daily ?? [], 'total')} vs ${t.sold}`);
-  record('Report: the showrooms add up to the total sold', near(sum(report.body?.byShowroom ?? [], 'total'), t.sold), 'showrooms differ');
-  record('Report: the salespeople add up to the total sold', near(sum(report.body?.bySalesperson ?? [], 'total'), t.sold), 'people differ');
+  record('Report: the days add up to the total sold', near(addUp(report.body?.daily ?? [], 'total'), t.sold), `days ${addUp(report.body?.daily ?? [], 'total')} vs ${t.sold}`);
+  record('Report: the showrooms add up to the total sold', near(addUp(report.body?.byShowroom ?? [], 'total'), t.sold), 'showrooms differ');
+  record('Report: the salespeople add up to the total sold', near(addUp(report.body?.bySalesperson ?? [], 'total'), t.sold), 'people differ');
   record('Report: verified + waiting + still to pay = sold', near(t.verified + t.pending + t.balance, t.sold), `${t.verified} + ${t.pending} + ${t.balance} vs ${t.sold}`);
   record('Report: a showroom only sees itself', (report.body?.byShowroom ?? []).length === 1, `saw ${(report.body?.byShowroom ?? []).length} showrooms`);
   record('Report: lists both salespeople', ['Anna', 'Carl'].every((name) => (report.body?.bySalesperson ?? []).some((row: { fullName: string }) => row.fullName.includes(name))), 'a salesperson was missing');
@@ -628,6 +632,34 @@ async function run(): Promise<void> {
   expectStatus('SHOWROOM: can download the payments CSV', { status: paymentsFile.status, body: null }, 200);
   record('...it has the payment columns', paymentsFile.text.includes('Date recorded') && paymentsFile.text.includes('Rejection reason'), 'wrong columns');
   expectStatus('STORE_MANAGER: cannot download the CSV', { status: (await callText(storeMgr, `/reports/sales/export?${range}`)).status, body: null }, 403);
+
+  // ---- the public website API (no login needed)
+  const pubName = encodeURIComponent(String(productWorkshop.body?.name ?? 'zzz'));
+  expectStatus('Anyone can read the website data (no login)', await call(null, 'GET', '/public/site'), 200);
+  const beforePublish = await call(null, 'GET', `/public/products?search=${pubName}`);
+  expectStatus('The public catalog works without a login', beforePublish, 200);
+  record('A product that is not switched on for the website is not shown', (beforePublish.body?.items ?? []).length === 0, 'an unpublished product was visible');
+  expectStatus('OWNER: can switch a product on for the website', await call(owner, 'PATCH', `/products/${pW}`, { isPublished: true }), 200);
+  const afterPublish = await call(null, 'GET', `/public/products?search=${pubName}`);
+  const publicCard = (afterPublish.body?.items ?? []).find((card: { id: string }) => card.id === pW);
+  record('...then it appears on the website', publicCard !== undefined, 'the published product was not listed');
+  const allowedFields = ['id', 'name', 'category', 'description', 'material', 'dimensions', 'price', 'imageUrl'];
+  record('...and the public card shows only safe fields (no stock, no cost, no SKU)', publicCard !== undefined && Object.keys(publicCard).every((key) => allowedFields.includes(key)), JSON.stringify(Object.keys(publicCard ?? {})));
+  expectStatus('OWNER: can switch it off again', await call(owner, 'PATCH', `/products/${pW}`, { isPublished: false }), 200);
+  const afterUnpublish = await call(null, 'GET', `/public/products?search=${pubName}`);
+  record('...and it disappears from the website', (afterUnpublish.body?.items ?? []).length === 0, 'it was still visible');
+  expectStatus('A wrong sort option is rejected', await call(null, 'GET', '/public/products?sort=secret'), 400, 'VALIDATION_ERROR');
+
+  const hello = await call(null, 'POST', '/public/chat', { message: 'hello' });
+  expectStatus('The chatbot answers without a login', hello, 200);
+  record('...with a reply and suggestions', typeof hello.body?.reply === 'string' && Array.isArray(hello.body?.suggestions), JSON.stringify(hello.body));
+  const where = await call(null, 'POST', '/public/chat', { message: 'where are your showrooms?' });
+  record('The chatbot can list the showrooms', where.status === 200 && Array.isArray(where.body?.showrooms), JSON.stringify(where.body));
+  const payChat = await call(null, 'POST', '/public/chat', { message: 'how can I pay?' });
+  record('The chatbot explains the payment methods', payChat.status === 200 && String(payChat.body?.reply).includes('Telebirr'), JSON.stringify(payChat.body));
+  expectStatus('An empty chat message is rejected', await call(null, 'POST', '/public/chat', { message: '   ' }), 400, 'VALIDATION_ERROR');
+  expectStatus('A very long chat message is rejected', await call(null, 'POST', '/public/chat', { message: 'x'.repeat(501) }), 400, 'VALIDATION_ERROR');
+  expectStatus('Staff data stays private: no login, no stock', await call(null, 'GET', '/stock'), 401);
 
   // ---- accounts: protection and instant sign-out
   expectStatus('OWNER cannot deactivate their own account', await call(owner, 'PATCH', `/users/${owner.id}/active`, { isActive: false }), 409, 'CANNOT_MODIFY_SELF');
